@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+**/__pycache__/
+/release/
+/dev/temp/
+/dev/private/
+.env
+*.sqlite*
+*.dpapi

@@ -1,0 +1,90 @@
+using System.Runtime.InteropServices;
+using System.Windows.Automation;
+using System.Windows.Automation.Text;
+
+namespace EchoType.App;
+
+public sealed partial class VoiceInputTarget
+{
+    private async Task<string> VerifyAsync(string expectedText, string caretPrefix)
+    {
+        var expected = Normalize(expectedText);
+        for (var i = 0; i < 30; i++)
+        {
+            await Task.Delay(100);
+            if (GetForegroundWindow() != _window)
+            {
+                LogFocus("verification-foreground-changed");
+                return "入力後に別のアプリへ移動しました。入力結果は対象の本文で確認してください。自動再送はしません。";
+            }
+            try
+            {
+                // Web入力欄は書き込みに伴って要素・パターンを再生成することがある。
+                ResolveElement(restoreSelection: false);
+                var actual = ReadDocument();
+                // TextPatternの段落表現とValuePatternの値が異なる入力欄でも、
+                // 書き込み対象そのもののValueが完全一致する場合は確認できる。空白は削らない。
+                if (Normalize(actual) != expected && (_value is null || Normalize(_value.Current.Value) != expected)) continue;
+                WriteVerified = true; VerifiedText = actual; _verifiedAt = DateTimeOffset.UtcNow;
+                try { CaretPlaced = await MoveCaretAsync(caretPrefix, actual); }
+                catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or COMException) { CaretPlaced = false; }
+                return CaretPlaced ? "保持した位置への入力を確認しました。"
+                    : "本文の入力を確認しました。カーソル位置は移動できませんでした。";
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or COMException) { }
+        }
+        return "文字を送信しましたが結果の一致を確認できません。自動再送はしません。対象の本文を確認してください。";
+    }
+
+    private async Task<bool> MoveCaretAsync(string prefix, string actual)
+    {
+        if (GetForegroundWindow() != _window) return false;
+        if (_emEditor is not null)
+        {
+            _emEditor.Select(prefix.Length, prefix.Length);
+            return _emEditor.ReadSelection(actual.Length) == (prefix.Length, prefix.Length);
+        }
+        RequireInputForeground(); LogFocus("caret-set-focus"); _element.SetFocus();
+        var normalizedPrefix = Normalize(prefix);
+        if (_pattern is not null)
+        {
+            // UIAのCharacterはUTF-16の文字数と一致しない（改行・絵文字等）。
+            // 実際の範囲本文を照合して挿入末尾を探し、選択を解除する。
+            var document = _pattern.DocumentRange;
+            var low = 0; var high = actual.Length;
+            while (low <= high)
+            {
+                var units = low + (high - low) / 2;
+                var range = document.Clone();
+                range.MoveEndpointByRange(TextPatternRangeEndpoint.End, range, TextPatternRangeEndpoint.Start);
+                range.MoveEndpointByUnit(TextPatternRangeEndpoint.End, TextUnit.Character, units);
+                var before = Normalize(range.GetText(200001));
+                if (before == normalizedPrefix)
+                {
+                    range.MoveEndpointByRange(TextPatternRangeEndpoint.Start, range, TextPatternRangeEndpoint.End);
+                    RequireInputForeground(); range.Select();
+                    RequireInputForeground(); range.ScrollIntoView(false);
+                    var selection = _pattern.GetSelection();
+                    return selection.Length == 1 && selection[0].Compare(range);
+                }
+                if (before.Length < normalizedPrefix.Length) low = units + 1; else high = units - 1;
+            }
+            return false;
+        }
+        if (Normalize(actual) != normalizedPrefix) return false;
+        // ValuePatternだけの欄は全文置換・末尾追記のみ。対象フォーカスを照合してCtrl+End。
+        if (!Automation.Compare(_element, AutomationElement.FocusedElement) ||
+            new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C, 0x0D, 0x01 }.Any(k => (GetAsyncKeyState(k) & 0x8000) != 0)) return false;
+        var inputs = new[] { Input.KeyPress(0x11, false), Input.KeyPress(0x23, false), Input.KeyPress(0x23, true), Input.KeyPress(0x11, true) };
+        RequireInputForeground();
+        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
+        if (sent != inputs.Length)
+        {
+            var release = new[] { Input.KeyPress(0x23, true), Input.KeyPress(0x11, true) };
+            SendInput((uint)release.Length, release, Marshal.SizeOf<Input>());
+            return false;
+        }
+        await Task.Delay(50);
+        return GetForegroundWindow() == _window && Automation.Compare(_element, AutomationElement.FocusedElement);
+    }
+}

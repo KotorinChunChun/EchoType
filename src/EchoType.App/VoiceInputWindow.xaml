@@ -1,0 +1,155 @@
+<Window x:Class="EchoType.App.VoiceInputWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="EchoType" Width="1080" Height="850" MinWidth="240" MinHeight="180" Topmost="True"
+ FontFamily="Yu Gothic UI" FontSize="14" Background="#F5F8F8" Foreground="#18353A">
+ <Window.Resources><Style x:Key="AutomaticToggleStyle" TargetType="ToggleButton">
+      <Setter Property="Foreground" Value="#18353A"/><Setter Property="Background" Value="#F7FAFA"/><Setter Property="BorderBrush" Value="#9EBAB4"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToggleButton">
+       <Border x:Name="ToggleSurface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4">
+        <Grid>
+         <Border x:Name="ToggleInset" BorderBrush="#60000000" BorderThickness="2,2,0,0" CornerRadius="3" Opacity="0"/>
+         <StackPanel x:Name="ToggleContent" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <TextBlock x:Name="ToggleCheck" Text="✓" FontWeight="Bold" Margin="0,0,4,0" Visibility="Collapsed"/><ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"/>
+         </StackPanel>
+         <Border x:Name="ToggleFocus" BorderBrush="#E9AE34" BorderThickness="1" Margin="2" CornerRadius="2" Visibility="Collapsed"/>
+        </Grid>
+       </Border>
+       <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ToggleSurface" Property="Background" Value="#DFEEEA"/></Trigger>
+        <Trigger Property="IsChecked" Value="True">
+         <Setter TargetName="ToggleSurface" Property="Background" Value="#147D68"/><Setter TargetName="ToggleSurface" Property="BorderBrush" Value="#0A5144"/>
+         <Setter TargetName="ToggleSurface" Property="BorderThickness" Value="2"/><Setter Property="Foreground" Value="White"/><Setter Property="FontWeight" Value="SemiBold"/>
+         <Setter TargetName="ToggleInset" Property="Opacity" Value="1"/><Setter TargetName="ToggleCheck" Property="Visibility" Value="Visible"/>
+        </Trigger>
+        <Trigger Property="IsPressed" Value="True"><Setter TargetName="ToggleContent" Property="RenderTransform"><Setter.Value><TranslateTransform Y="1"/></Setter.Value></Setter><Setter TargetName="ToggleInset" Property="Opacity" Value="1"/></Trigger>
+        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ToggleFocus" Property="Visibility" Value="Visible"/></Trigger>
+        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ToggleSurface" Property="Opacity" Value="0.5"/></Trigger>
+       </ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+     </Style>
+     <Style x:Key="ConfirmButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Foreground" Value="White"/>
+      <Style.Triggers>
+       <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="#203A40"/></Trigger>
+       <Trigger Property="IsPressed" Value="True"><Setter Property="Foreground" Value="#203A40"/></Trigger>
+       <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/></Trigger>
+      </Style.Triggers>
+     </Style></Window.Resources>
+ <Grid><ScrollViewer x:Name="OuterViewport" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="10">
+ <Grid x:Name="MainLayout" MinWidth="750" MinHeight="550" Width="{Binding ViewportWidth, ElementName=OuterViewport}" Height="{Binding ViewportHeight, ElementName=OuterViewport}">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition x:Name="ComparisonRow" Height="*"/><RowDefinition x:Name="DraftRow" Height="Auto"/></Grid.RowDefinitions>
+  <Border x:Name="TargetGroup" Background="#E4F0EE" CornerRadius="10" Padding="6" Margin="0,0,0,6">
+   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="135"/></Grid.ColumnDefinitions>
+    <TextBox x:Name="TargetPath" IsReadOnly="True" MinHeight="56" Margin="0" VerticalContentAlignment="Center" TextWrapping="Wrap" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled" AutomationProperties.AutomationId="VoiceTargetPath"/>
+    <Button x:Name="TargetButton" Grid.Column="1" Content="⌖ ターゲット" Margin="10,0,0,0" MinHeight="56" VerticalAlignment="Stretch" ToolTip="入力欄の文字位置へドラッグして指定" PreviewMouseLeftButtonDown="Target_Down" PreviewMouseLeftButtonUp="Target_Up" LostMouseCapture="Target_LostCapture" AutomationProperties.AutomationId="VoiceTargetButton"/>
+   </Grid>  </Border>
+  <Expander x:Name="CapturePanel" Grid.Row="1" Header="録音デバイス・波形・リアルタイム文字起こし" IsExpanded="True" Expanded="CapturePanel_Changed" Collapsed="CapturePanel_Changed" Background="#E4F0EE" Padding="6" Margin="0,0,0,4">
+   <StackPanel>
+    <DockPanel x:Name="DevicePanel" Margin="0,0,0,8">
+     <CheckBox Content="最前面表示" DockPanel.Dock="Right" IsChecked="{Binding Topmost, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+     <Button Content="一覧更新" Click="RefreshDevices_Click" DockPanel.Dock="Right" Height="32" MinHeight="32" Padding="8,3" Margin="8,0,0,0"/>
+     <TextBlock Text="録音デバイス" VerticalAlignment="Center" Margin="0,0,12,0"/>
+     <ComboBox x:Name="DeviceCombo" DisplayMemberPath="Name" SelectionChanged="Device_Changed" MinHeight="32" ToolTip="選択すると音声入力専用に保存され、次の録音に適用されます" AutomationProperties.AutomationId="VoiceDeviceCombo"/>
+    </DockPanel>
+    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="230"/></Grid.ColumnDefinitions>
+     <Border Background="#18353A" CornerRadius="5" Height="52" Margin="0,0,16,0" ClipToBounds="True"><Canvas x:Name="WaveCanvas" ClipToBounds="True" SizeChanged="Wave_SizeChanged"><Polyline x:Name="WaveLine" Stroke="#7BE3C6" StrokeThickness="1.3"/></Canvas></Border>
+     <StackPanel Grid.Column="1"><TextBlock x:Name="LevelText" Text="入力 −96.0 dBFS / peak 0%" FontSize="12"/><ProgressBar x:Name="LevelBar" Minimum="0" Maximum="96" Height="10" Margin="0,5,0,4" Foreground="#16826E"/><TextBlock x:Name="ActualDeviceText" Text="録音待ち" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel>
+    </Grid>
+    <Border x:Name="LiveGroup" Background="#F7FAFA" CornerRadius="5" Padding="8" Margin="0,8,0,0">
+     <StackPanel><TextBlock x:Name="LiveLabel" Text="精度優先の途中認識（押下音声のみ）" FontSize="11" Foreground="#537D76"/>
+      <TextBox x:Name="LiveText" IsReadOnly="True" TextWrapping="Wrap" MinHeight="35" MaxHeight="65" Margin="0" Padding="0,4" BorderThickness="0" Background="Transparent" VerticalScrollBarVisibility="Auto" AutomationProperties.AutomationId="VoiceLiveText"/>
+     </StackPanel>
+    </Border>
+   </StackPanel>
+  </Expander>
+  <ScrollViewer x:Name="ComparisonViewport" Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
+   <Border x:Name="QueueGroup" Background="#E8EDF7" CornerRadius="8" Padding="6" Margin="0,0,0,6"><Expander x:Name="QueuePanel" Header="録音キュー・ログ（追記・削除で完了分を消去）">
+    <StackPanel>
+     <DataGrid x:Name="QueueLog" Height="115" SelectionMode="Single" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" AutomationProperties.AutomationId="VoiceQueueLog">
+      <DataGrid.Columns><DataGridTextColumn Header="#" Binding="{Binding Number}" Width="35"/><DataGridTextColumn Header="開始" Binding="{Binding Time}" Width="75"/><DataGridTextColumn Header="秒" Binding="{Binding Seconds, StringFormat=F1}" Width="45"/><DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="130"/><DataGridTextColumn Header="途中認識" Binding="{Binding LiveText}" Width="*"/>
+       <DataGridTemplateColumn Header="音声" Width="65"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="再生" Tag="{Binding}" IsEnabled="{Binding CanReplay}" Click="Play_Click" Margin="0" MinHeight="24" Padding="4,0"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+      </DataGrid.Columns>
+     </DataGrid>
+     <DockPanel><Button Content="失敗分を再試行" Click="RetryRecognition_Click" DockPanel.Dock="Right" Margin="4,0,0,0" Padding="6,2" MinHeight="28"/><Button Content="再生停止" Click="StopPlayback_Click" DockPanel.Dock="Right" Margin="4,0,0,0" Padding="6,2" MinHeight="28"/><TextBlock Text="{Binding SelectedItem.FileName, ElementName=QueueLog}" VerticalAlignment="Center"/></DockPanel>
+     <TextBox Text="{Binding SelectedItem.Details, ElementName=QueueLog, Mode=OneWay}" IsReadOnly="True" Height="65" Margin="0" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+    </StackPanel>
+   </Expander></Border>
+   <Border x:Name="CandidateGroup" Background="#E6F1ED" CornerRadius="8" Padding="6"><StackPanel><DockPanel Margin="0,0,0,4">
+    <ToggleButton x:Name="AutomaticInputToggle" Style="{StaticResource AutomaticToggleStyle}" DockPanel.Dock="Right" Content="自動採用" Width="90" Height="28" Checked="AutomaticInput_Changed" Unchecked="AutomaticInput_Changed" ToolTip="先頭モデルの認識結果を自動採用" AutomationProperties.AutomationId="VoiceAutomaticInput">
+
+    </ToggleButton>
+    <TextBlock x:Name="CandidateHeading" Text="候補文字列" FontWeight="SemiBold" VerticalAlignment="Center"/>
+   </DockPanel>
+   <ItemsControl x:Name="Cards" HorizontalContentAlignment="Stretch"><ItemsControl.ItemTemplate><DataTemplate>
+    <Border BorderBrush="#C7DCDA" BorderThickness="1" CornerRadius="7" Background="#F7FAFA" Padding="6" Margin="0,0,0,4">
+     <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="310"/><ColumnDefinition Width="*"/><ColumnDefinition Width="64"/><ColumnDefinition Width="64"/></Grid.ColumnDefinitions>
+      <ComboBox ItemsSource="{Binding Engines}" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding EngineId, Mode=TwoWay}" IsEnabled="{Binding Editable}" Height="36" MinHeight="36" Margin="0,0,8,0"/>
+      <StackPanel Grid.Column="1" Height="36" VerticalAlignment="Center" Margin="0,0,8,0"><TextBlock Text="{Binding Summary}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Summary}"/><ProgressBar Value="{Binding SpeedPercent, Mode=OneWay}" Maximum="100" Height="8" Margin="0,5,0,0" Foreground="#278C83" ToolTip="累計処理時間の比較。結果が届くたびに全モデルを同じ最大値で再計算" AutomationProperties.AutomationId="VoiceTimeBar"/></StackPanel>
+      <Button Grid.Column="2" Content="追記" Tag="{Binding}" Click="Append_Click" IsEnabled="{Binding CanConfirm}" Height="36" MinHeight="36" Margin="0" Padding="8,3" AutomationProperties.AutomationId="VoiceConfirmButton"/>
+      <Button Grid.Column="3" Content="削除" Click="Delete_Click" IsEnabled="{Binding CanClear}" Height="36" MinHeight="36" Margin="4,0,0,0" Padding="8,3" ToolTip="全モデルの完了済み候補だけを消去。未完了は継続" AutomationProperties.AutomationId="VoiceDeleteButton"/>
+      <Grid Grid.Row="1" Grid.ColumnSpan="4">
+      <TextBox Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding ReadOnly}" AcceptsReturn="True" MaxLength="16000" Height="64" FontSize="16" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,4,0,0" Padding="6" AutomationProperties.AutomationId="VoicePreviewText"/>
+      <Border Width="30" Height="30" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0" Background="#F7FAFA" CornerRadius="15" IsHitTestVisible="False" ToolTip="文字起こし処理中" AutomationProperties.AutomationId="VoiceProcessingSpinner">
+       <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsProcessing}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style>
+       <Path Width="20" Height="20" Data="M 10,1 A 9,9 0 1 1 1,10" Stroke="#16826E" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
+        <Path.RenderTransform><RotateTransform/></Path.RenderTransform>
+        <Path.Style><Style TargetType="Path"><Style.Triggers><Trigger Property="IsVisible" Value="True"><Trigger.EnterActions><BeginStoryboard Name="Spin"><Storyboard><DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)" From="0" To="360" Duration="0:0:0.8" RepeatBehavior="Forever"/></Storyboard></BeginStoryboard></Trigger.EnterActions><Trigger.ExitActions><RemoveStoryboard BeginStoryboardName="Spin"/></Trigger.ExitActions></Trigger></Style.Triggers></Style></Path.Style>
+       </Path>
+      </Border></Grid>
+     </Grid>
+    </Border>
+   </DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Border>
+  </StackPanel></ScrollViewer>
+  <Border x:Name="DraftGroup" Grid.Row="4" Background="#F3EFE3" CornerRadius="8" Padding="6" Margin="0,6,0,0"><Grid>
+   <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <Grid x:Name="DraftGrid" Height="145">
+    <Grid.ColumnDefinitions><ColumnDefinition x:Name="BeforeColumn" Width="0"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Grid x:Name="BeforePane" Visibility="Collapsed" Margin="0,0,4,0">
+     <Grid.RowDefinitions><RowDefinition Height="24"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <TextBlock Text="− 整形前" Foreground="#A32929" FontWeight="SemiBold"/>
+     <Grid Grid.Row="1" ClipToBounds="True" Background="White">
+      <Canvas x:Name="BeforeHighlights" IsHitTestVisible="False" ClipToBounds="True"/>
+      <TextBox x:Name="BeforeText" IsReadOnly="True" Margin="0" Background="Transparent" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontSize="16" ScrollViewer.ScrollChanged="Diff_Scrolled"/>
+     </Grid>
+    </Grid>
+    <Grid Grid.Column="1">
+     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <WrapPanel MinHeight="24"><TextBlock x:Name="CaretPosition" Text="送信予定文字列" Foreground="#18663D" FontWeight="SemiBold" VerticalAlignment="Center"/><CheckBox x:Name="ReadCurrentText" Content="現在の入力済文字列を取得" Margin="12,0,0,0" VerticalAlignment="Center" Checked="ReadCurrentText_Changed" Unchecked="ReadCurrentText_Changed"/>
+      <ComboBox x:Name="UnsentDrafts" Width="220" Height="24" Margin="12,0,0,0" DisplayMemberPath="Preview" SelectionChanged="UnsentDrafts_Changed" ToolTip="未送信テキストを末尾へ追記" AutomationProperties.AutomationId="VoiceUnsentDrafts" AutomationProperties.Name="未送信テキスト"/>
+     </WrapPanel>
+     <Grid Grid.Row="1" ClipToBounds="True" Background="White">
+      <Canvas x:Name="AfterHighlights" IsHitTestVisible="False" ClipToBounds="True"/>
+      <TextBox x:Name="Editor" Margin="0" Background="Transparent" AcceptsReturn="True" AcceptsTab="True" MaxLength="16000" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontSize="16" CaretBrush="#E67817" SelectionChanged="Editor_SelectionChanged" ScrollViewer.ScrollChanged="Editor_Scrolled" TextChanged="Editor_Changed" AutomationProperties.AutomationId="VoiceEditor"/>
+      <Canvas IsHitTestVisible="False" ClipToBounds="True"><Border x:Name="CaretMarker" Background="#E67817" Width="3" Height="20"/></Canvas>
+     </Grid>
+    </Grid>
+   </Grid>
+   <Grid x:Name="DraftActions" Grid.Row="1" Margin="0,4,0,4">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <WrapPanel VerticalAlignment="Top">
+     <Button Content="修正を覚える" Click="RememberCorrection_Click" Height="32" MinHeight="32" Margin="0,0,6,4" Padding="6,3" ToolTip="選択した語を個人辞書へ登録"/>
+     <Button Content="直前入力を戻す" Click="UndoInput_Click" Height="32" MinHeight="32" Margin="0,0,6,4" Padding="6,3"/>
+     <Button Content="戻して再編集" Click="ReeditInput_Click" Height="32" MinHeight="32" Margin="0,0,6,4" Padding="6,3"/>
+    </WrapPanel>
+    <Button x:Name="ProcessingDetailsButton" Grid.Column="1" Content="処理時間" Click="ProcessingDetails_Click" Height="32" MinHeight="32" VerticalAlignment="Top" Margin="0,0,8,0" Padding="6,3"/>
+    <StackPanel Grid.Column="2" Margin="0,0,8,0" Width="120" VerticalAlignment="Top">
+     <ComboBox x:Name="FormattingModel" Height="32" MinHeight="32" Margin="0,0,0,4"/>
+     <ComboBox x:Name="FormattingEffort" Height="32" MinHeight="32" Margin="0" ToolTip="エフォート"/>
+    </StackPanel>
+    <StackPanel Grid.Column="3" Margin="0,0,8,0" Width="128" VerticalAlignment="Top">
+     <ToggleButton x:Name="AutomaticFormattingToggle" Content="自動整形" Style="{StaticResource AutomaticToggleStyle}" Height="32" Margin="0,0,0,4" Checked="AutomaticOptions_Changed" Unchecked="AutomaticOptions_Changed" ToolTip="採用した本文をプロンプト用に自動で整形" AutomationProperties.AutomationId="VoiceAutomaticFormatting"/>
+     <Button x:Name="SimpleFormatButton" Content="単純整形" Click="SimpleFormat_Click" Height="32" MinHeight="32" Margin="0,0,0,4" Padding="8,3"/>
+     <Button x:Name="FormatButton" Content="プロンプト用整形" Click="Format_Click" Height="32" MinHeight="32" Margin="0" Padding="8,3"/>
+    </StackPanel>
+    <StackPanel Grid.Column="4" Width="100" VerticalAlignment="Top">
+     <ToggleButton x:Name="AutomaticConfirmToggle" Content="自動決定" Style="{StaticResource AutomaticToggleStyle}" Height="32" Margin="0,0,0,4" Checked="AutomaticOptions_Changed" Unchecked="AutomaticOptions_Changed" ToolTip="採用した本文を外部入力欄へ自動で入力" AutomationProperties.AutomationId="VoiceAutomaticConfirm"/>
+     <Button x:Name="ConfirmButton" Content="決定" Background="#147D68" Style="{StaticResource ConfirmButtonStyle}" FontWeight="Bold" ToolTip="Ctrl＋Enter" Click="Confirm_Click" Height="32" MinHeight="32" Margin="0,0,0,4" Padding="14,3" AutomationProperties.AutomationId="VoiceFormatConfirm"/>
+     <Button x:Name="CancelButton" Content="中止" Click="Cancel_Click" Height="32" MinHeight="32" Margin="0" Padding="14,3"/>
+    </StackPanel>
+    <Button x:Name="SettingsButton" Grid.Column="5" Content="設定" Click="Settings_Click" Width="64" Height="32" MinHeight="32" VerticalAlignment="Top" Margin="24,0,0,0" Padding="8,3"/>
+   </Grid>
+   <TextBlock x:Name="StatusText" Grid.Row="2" Text="左Ctrl＋左Shiftを1秒以上押したまま話し、離すと文字起こしします。" TextWrapping="Wrap" FontSize="12"/>
+  </Grid></Border>
+ </Grid></ScrollViewer><Border x:Name="RecordingTint" BorderBrush="#FFDEDE" BorderThickness="10" IsHitTestVisible="False" Visibility="Collapsed"/></Grid>
+</Window>

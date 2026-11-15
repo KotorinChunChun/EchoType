@@ -30,9 +30,23 @@ $test = '.\tests\EchoType.Tests\bin\Debug\net10.0-windows\EchoType.Tests.exe'
 
 ## 保存先とモデル
 
-TranscriptionServerを使用する場合は、設定の接続方式で「このPCの TranscriptionServer」を選択します。既定は `http://127.0.0.1:8769/v1/audio/transcriptions` です。確定モデルと即時表示モデルは、それぞれサーバーから取得した一覧で選びます。起動準備中の場合は、TranscriptionServerの準備完了後に「モデル一覧を更新」を押してください。
+TranscriptionServerを使用する場合は、設定の接続方式で「TranscriptionServer」を選択します。既定は `http://127.0.0.1:8769/v1/audio/transcriptions` です。確定モデルと即時表示モデルは、それぞれサーバーから取得した一覧で選びます。起動準備中の場合は、TranscriptionServerの準備完了後に「モデル一覧を更新」を押してください。
 
-接続はループバックに限定します。認識の受付状態と一時トークンは `/api/health` で確認し、`/v1/models` の文字起こし候補だけを表示します。認識時は選んだモデルIDを変更せずに `/v1/audio/transcriptions` へ送ります。一時トークンは設定に保存しません。
+ループバックではHTTP、別のPCへはHTTPSを使います。認識の受付状態とlocal／lan認証の一時トークンは `/api/health` で確認し、`/v1/models` の文字起こし候補を表示します。認識時は選んだモデルIDを変更せずに `/v1/audio/transcriptions` へ送ります。一時トークンは設定に保存しません。
+
+### 合成音声が送信予定欄に入ることを確認する
+
+試験用に1〜10秒の24kHz・16bit・モノラルPCM WAVを用意します。サーバーのモデル一覧から導入済みの文字起こしモデルのIDを選びます。テストは非表示デスクトップと隔離設定を使い、録音キーと合成WAVを通常の録音処理へ渡します。合成WAVの認識結果が送信予定欄に反映された時点で終了します。
+
+```powershell
+cd C:\develop\KotorinToys\tools\EchoType
+dotnet build tests/EchoType.Tests
+$test = '.\tests\EchoType.Tests\bin\Debug\net10.0-windows\EchoType.Tests.exe'
+$endpoint = 'http://127.0.0.1:8769/v1/audio/transcriptions'
+$model = '<モデル一覧から選んだID>'
+$wav = (Resolve-Path '<試験用の合成WAV>').Path
+& $test --transcription-server-smoke $endpoint $model $wav
+```
 
 製品データは `%LOCALAPPDATA%\EchoType` に保存し、SQLite の本文・設定・辞書と一時音声は Windows の同一ユーザー用 DPAPI で保護します。`--data-root` は別の EchoType 環境を指定します。移行時の `--source-root` は旧版のデータルートを指定します。`--smoke-ui` は試験専用データルートを要求し、マイクとグローバルキー監視を停止した状態で画面を検証して終了します。
 

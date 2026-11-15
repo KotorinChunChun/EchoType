@@ -33,8 +33,8 @@ public sealed record ExternalSpeechSettings
             (!uri.IsLoopback || uri.AbsolutePath != "/v1/audio/transcriptions" || uri.Query.Length != 0))
             throw new InvalidOperationException("speech.cppには、このPC内の /v1/audio/transcriptions のURLを指定してください。");
         if (Mode == ExternalSpeechMode.TranscriptionServer &&
-            (!uri.IsLoopback || uri.AbsolutePath != "/v1/audio/transcriptions" || uri.Query.Length != 0))
-            throw new InvalidOperationException("TranscriptionServerには、このPC内の /v1/audio/transcriptions のURLを指定してください。");
+            (uri.AbsolutePath != "/v1/audio/transcriptions" || uri.Query.Length != 0))
+            throw new InvalidOperationException("TranscriptionServerの /v1/audio/transcriptions のURLを指定してください。");
         return uri;
     }
 

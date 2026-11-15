@@ -8,7 +8,7 @@ using System.Windows.Controls;
 
 internal static class VoiceInputQueueDiagnostics
 {
-    public static int Run()
+    public static int Run(string? serverEndpoint = null, string? model = null, string? wave = null)
     {
         var code = 1;
         var thread = new Thread(() =>
@@ -23,6 +23,12 @@ internal static class VoiceInputQueueDiagnostics
                 var gates = Enumerable.Range(0, 8).Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
                 try
                 {
+                    if (serverEndpoint is not null)
+                    {
+                        await VerifyServerAsync(app, serverEndpoint, model!, wave!);
+                        code = 0;
+                        return;
+                    }
                     using var store = new SecureStore(new AgentPaths(Path.Combine(AppContext.BaseDirectory, "test-output", "voice-queue-" + Guid.NewGuid().ToString("N"))));
                     var final = ExternalSpeechSettings.SpeechCppDefault with { Model = "fixture-final" };
                     var preview = final with { Endpoint = "http://127.0.0.1:8081/v1/audio/transcriptions", Model = "fixture-live" };
@@ -187,6 +193,56 @@ internal static class VoiceInputQueueDiagnostics
     {
         for (var i = 0; i < 120 && !predicate(); i++) await Task.Delay(50);
         Require(predicate(), "期限内に処理完了");
+    }
+    private static async Task VerifyServerAsync(Application app, string endpoint, string model, string file)
+    {
+        using var audio = new WaveFileReader(file);
+        if (audio.WaveFormat.Encoding != WaveFormatEncoding.Pcm || audio.WaveFormat.SampleRate != 24000 ||
+            audio.WaveFormat.BitsPerSample != 16 || audio.WaveFormat.Channels != 1 || audio.TotalTime.TotalSeconds is < 1 or > 10)
+            throw new ArgumentException("試験用WAVは1〜10秒の24kHz・16bitモノラルPCMを指定してください。");
+        var pcm = new byte[checked((int)audio.Length)];
+        audio.ReadExactly(pcm);
+        using var store = new SecureStore(new AgentPaths(Path.Combine(AppContext.BaseDirectory, "test-output", "server-voice-" + Guid.NewGuid().ToString("N"))));
+        store.SaveVoiceInputSettings(new()
+        {
+            ExternalSpeech = new() { Mode = ExternalSpeechMode.TranscriptionServer, Endpoint = endpoint, Model = model }
+        });
+        var armed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var polls = 0;
+        var held = 0;
+        Input? input = null;
+        var controller = new VoiceInputController(store.Paths, store, app.Dispatcher, false, true,
+            openInput: _ => input = new Input(), keyState: key =>
+            {
+                if (key == 0xFE && Interlocked.Increment(ref polls) == 2) armed.TrySetResult();
+                return (key is 0xA2 or 0xA0) && Volatile.Read(ref held) == 1;
+            });
+        try
+        {
+            await armed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Volatile.Write(ref held, 1);
+            await Until(() => input is not null && app.Windows.OfType<VoiceInputWindow>().Any(w => w.IsVisible));
+            input!.Feed(pcm);
+            await Task.Delay(1100);
+            Volatile.Write(ref held, 0);
+            var window = app.Windows.OfType<VoiceInputWindow>().Single();
+            var grid = (DataGrid)window.FindName("QueueLog");
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(100));
+            VoiceInputLogEntry? entry = null;
+            while ((entry = grid.Items.Cast<VoiceInputLogEntry>().SingleOrDefault()) is not { Finished: true })
+                await Task.Delay(50, deadline.Token);
+            var result = entry.Results.Single();
+            if (result.Error is { Length: > 0 } error)
+            {
+                var status = (TextBlock)window.FindName("RecognitionText");
+                Require(status.Text.Contains(error, StringComparison.Ordinal), "確定欄に失敗理由を表示");
+                throw new InvalidOperationException(error);
+            }
+            Require(!string.IsNullOrWhiteSpace(result.Text), "サーバーの確定応答を取得");
+            var editor = (TextBox)window.FindName("Editor");
+            Require(editor.Text == controller.Settings.CompleteCandidate(result.Text), "TranscriptionServerの確定結果がEchoTypeの送信予定欄に反映された");
+        }
+        finally { await controller.StopAsync(); }
     }
     private static void Require(bool ok, string message) { if (!ok) throw new Exception(message); Console.WriteLine("PASS " + message); }
     private sealed class Input : IWaveIn

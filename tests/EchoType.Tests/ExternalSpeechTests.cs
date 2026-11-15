@@ -112,6 +112,17 @@ internal static class ExternalSpeechTests
         }));
         var preparing = await ExternalSpeechRecognizer.RecognizeAsync(notReady, [1, 2, 3], chosen, CancellationToken.None);
         Require(!preparing.Succeeded && preparing.Error.Contains("受付準備中", StringComparison.Ordinal), "サーバーの準備中を認識失敗の理由に表示");
+        var lan = chosen with { Endpoint = "https://transcription.example.test/v1/audio/transcriptions" };
+        using var lanHttp = new HttpClient(new TestHandler(request =>
+        {
+            Require(request.RequestUri?.Host == "transcription.example.test", "LAN用HTTPSで同じ接続先を使う");
+            if (request.RequestUri!.AbsolutePath == "/api/health")
+                return Task.FromResult(Json("""{"appId":"meeting-transcriber","serverVersion":"0.1.17","protocolVersion":3,"authMode":"lan","acceptingJobs":true,"token":"lan-fixture"}"""));
+            Require(request.Headers.GetValues("X-Local-Token").Single() == "lan-fixture", "LANの一時トークンを認識に使用");
+            return Task.FromResult(Json("""{"text":"LANの試験"}"""));
+        }));
+        Require((await ExternalSpeechRecognizer.RecognizeAsync(lanHttp, [1, 2, 3], lan, CancellationToken.None)).Text == "LANの試験",
+            "既存のHTTPS制約でLAN認証を使える");
     }
 
     private static void Require(bool condition, string message)

@@ -7,12 +7,14 @@ using System.Text;
 /// <summary>SwitchDesktopを呼ばず、実入力を使わないWPF試験だけを非表示デスクトップで実行する。</summary>
 internal static class IsolatedDesktopDiagnostics
 {
-    public static int Run(string mode, string? appExecutable = null)
+    public static int Run(string mode, string? appExecutable = null, string[]? serverArguments = null)
     {
         var dataRoot = Path.Combine(AppContext.BaseDirectory, "test-output", "app-" + Guid.NewGuid().ToString("N"));
         var (executable, argument) = mode switch
         {
             "queue" => (Environment.ProcessPath!, "--queue-child"),
+            "server-voice" when serverArguments is [var endpoint, var model, var wave] =>
+                (Environment.ProcessPath!, $"--transcription-server-child \"{endpoint}\" \"{model}\" \"{wave}\""),
             "focus" => (Environment.ProcessPath!, "--focus-child"),
             "app" or "app-legacy" when appExecutable is not null => (Path.GetFullPath(appExecutable),
                 $"--smoke-ui --data-root \"{dataRoot}\""),

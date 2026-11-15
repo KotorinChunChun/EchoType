@@ -74,7 +74,7 @@ public sealed class VoiceInputSettingsWindow : Window
             var modes = new[]
             {
                 new { Name = "このPCの speech.cpp サーバー", Mode = ExternalSpeechMode.SpeechCpp },
-                new { Name = "このPCの TranscriptionServer", Mode = ExternalSpeechMode.TranscriptionServer },
+                new { Name = "TranscriptionServer", Mode = ExternalSpeechMode.TranscriptionServer },
                 new { Name = "外部サーバー（APIキーなし）", Mode = ExternalSpeechMode.Server },
                 new { Name = "外部API（APIキーあり）", Mode = ExternalSpeechMode.ApiKey }
             };

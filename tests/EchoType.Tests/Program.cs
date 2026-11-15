@@ -8,6 +8,16 @@ if (args is ["--focus-child"]) return VoiceInputMonitorDiagnostics.Run(20);
 if (args is ["--focus-interactive"]) return VoiceInputMonitorDiagnostics.Run(1, interactive: true);
 if (args is ["--confirm-interactive"]) return VoiceInputMonitorDiagnostics.Run(0, interactive: true, confirmOnly: true);
 if (args is ["--speech-loopback", var endpoint]) return await ExternalSpeechTests.LoopbackAsync(endpoint);
+if (args is ["--transcription-server-smoke", var url, var model, var wave])
+{
+    var settings = new EchoType.Core.ExternalSpeechSettings { Mode = EchoType.Core.ExternalSpeechMode.TranscriptionServer, Endpoint = url, Model = model };
+    var target = settings.ValidateEndpoint();
+    if (!System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9_.\-/]+$"))
+        throw new ArgumentException("試験にはサーバーのモデルIDを指定してください。");
+    return IsolatedDesktopDiagnostics.Run("server-voice", serverArguments: [target.AbsoluteUri, model, Path.GetFullPath(wave)]);
+}
+if (args is ["--transcription-server-child", var childUrl, var childModel, var childWave])
+    return VoiceInputQueueDiagnostics.Run(childUrl, childModel, childWave);
 if (args.Length != 0) return 2;
 
 var root = Path.Combine(AppContext.BaseDirectory, "test-output", Guid.NewGuid().ToString("N"));

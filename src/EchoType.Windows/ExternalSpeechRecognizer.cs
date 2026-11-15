@@ -14,8 +14,11 @@ public static class ExternalSpeechRecognizer
     private static readonly HttpClient LoopbackConnection = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = false });
 
     public static Task<AsrResult> RecognizeAsync(byte[] wave, ExternalSpeechSettings settings, CancellationToken cancellation) =>
-        RecognizeAsync(settings.Mode is ExternalSpeechMode.SpeechCpp or ExternalSpeechMode.TranscriptionServer
-            ? LoopbackConnection : Connection, wave, settings, cancellation);
+        RecognizeAsync(SelectConnection(settings), wave, settings, cancellation);
+
+    private static HttpClient SelectConnection(ExternalSpeechSettings settings) =>
+        settings.Mode is ExternalSpeechMode.SpeechCpp or ExternalSpeechMode.TranscriptionServer &&
+        Uri.TryCreate(settings.Endpoint, UriKind.Absolute, out var endpoint) && endpoint.IsLoopback ? LoopbackConnection : Connection;
 
     internal static async Task<AsrResult> RecognizeAsync(HttpClient connection, byte[] wave, ExternalSpeechSettings settings, CancellationToken cancellation)
     {
@@ -64,7 +67,7 @@ public static class ExternalSpeechRecognizer
     private const string PreparationMessage = "TranscriptionServerは文字起こしの受付準備中です。管理画面で状態を確認してください。";
 
     public static Task<TranscriptionModel[]> ListTranscriptionModelsAsync(ExternalSpeechSettings settings, CancellationToken cancellation) =>
-        ListTranscriptionModelsAsync(LoopbackConnection, settings, cancellation);
+        ListTranscriptionModelsAsync(SelectConnection(settings), settings, cancellation);
 
     internal static async Task<TranscriptionModel[]> ListTranscriptionModelsAsync(HttpClient connection,
         ExternalSpeechSettings settings, CancellationToken cancellation)
@@ -107,10 +110,13 @@ public static class ExternalSpeechRecognizer
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(endpoint, "/api/health"));
         using var body = await ReadTranscriptionServerJsonAsync(connection, request, cancellation).ConfigureAwait(false);
         var root = body.RootElement;
-        if (ReadString(root, "appId") != "meeting-transcriber" || ReadString(root, "authMode") != "local" ||
+        var auth = ReadString(root, "authMode");
+        if (ReadString(root, "appId") != "meeting-transcriber" ||
             !root.TryGetProperty("protocolVersion", out var version) || version.ValueKind != JsonValueKind.Number ||
             !version.TryGetInt32(out var protocol) || protocol != 3)
-            throw new InvalidOperationException("同じPCで動作するTranscriptionServerの接続先を確認してください。");
+            throw new InvalidOperationException("TranscriptionServerの接続先とプロトコルを確認してください。");
+        if (auth != "lan" && !(auth == "local" && endpoint.IsLoopback))
+            throw new InvalidOperationException("TranscriptionServerのlocalまたはlan認証で接続してください。");
         var token = ReadString(root, "token");
         if (string.IsNullOrEmpty(token) || token.Length > 4096 || token.Any(c => c is < '!' or > '~'))
             throw new InvalidOperationException("TranscriptionServerの接続トークンを取得できませんでした。");

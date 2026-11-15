@@ -33,3 +33,13 @@ if ($LASTEXITCODE -ne 0) { throw "移行に失敗しました。終了コード 
 認識音声はローカルで処理します。Codex CLI による整形を選ぶと、編集本文と整形指示・関連する辞書がその接続へ送られます。
 
 [ビルドと開発検証](docs/DEVELOPERS_GUIDE.md) · [開発記録](dev/README.md)
+
+## 使用言語とライブラリ
+
+- 使用言語はC#、XAML、Python（ローカル音声認識）です。
+- .NET 10、WPF、Windows Forms。録音にはNAudio、設定の保存にはMicrosoft.Data.Sqlite、モデルの実行にはONNX Runtimeを使います。Pythonで動く認識方式にはfaster-whisperやsherpa-onnxがあります。
+- 依存定義と資料 [Windows側の依存定義](src/EchoType.Windows/EchoType.Windows.csproj)・[音声認識の依存定義](src/EchoType.Windows/Asr/requirements.txt)・[高速認識の依存定義](src/EchoType.Windows/Asr/requirements-fast.txt)
+
+## ライセンス
+
+本アプリの独自コードと文書には[MITライセンス](LICENSE)が適用されます。第三者のコンポーネントや素材には、それぞれのライセンスが適用されます。

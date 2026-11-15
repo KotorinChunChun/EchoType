@@ -28,7 +28,10 @@
 
   <Target Name="BuildCaptionDllHost" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'"
           Inputs="$(MSBuildProjectDirectory)\..\CaptionNative\src\BackendProbe.cpp;$(MSBuildProjectDirectory)\..\CaptionNative\scripts\build-probe.ps1"
-          Outputs="$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)caption-native\$(Configuration)\BackendProbe.exe">
-    <Exec Command="pwsh -NoProfile -File &quot;$(MSBuildProjectDirectory)\..\CaptionNative\scripts\build-probe.ps1&quot; -Source BackendProbe -SdkIncludePath &quot;$(NuGetPackageRoot)/microsoft.cognitiveservices.speech\1.49.0\build\native\include&quot; -OutputDirectory &quot;$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)caption-native\$(Configuration)&quot;" />
+          Outputs="$(BaseIntermediateOutputPath)caption-native\$(Configuration)\BackendProbe.exe">
+    <PropertyGroup>
+      <CaptionNativeOutput>$([System.IO.Path]::GetFullPath('$(BaseIntermediateOutputPath)caption-native\$(Configuration)', '$(MSBuildProjectDirectory)'))</CaptionNativeOutput>
+    </PropertyGroup>
+    <Exec Command="pwsh -NoProfile -File &quot;$(MSBuildProjectDirectory)\..\CaptionNative\scripts\build-probe.ps1&quot; -Source BackendProbe -SdkIncludePath &quot;$(NuGetPackageRoot)/microsoft.cognitiveservices.speech\1.49.0\build\native\include&quot; -OutputDirectory &quot;$(CaptionNativeOutput)&quot;" />
   </Target>
 </Project>

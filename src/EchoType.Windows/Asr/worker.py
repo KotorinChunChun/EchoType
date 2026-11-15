@@ -15,15 +15,16 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from fast_models import MODELS as FAST_MODELS, has_weights as has_fast_weights, runtime_directory
 
+if os.name == "nt":
+    # パッケージのVC++ DLLを、別フォルダーのPythonで動くネイティブ拡張からも参照する。
+    _app_local_dlls = os.add_dll_directory(str(Path(__file__).resolve().parent.parent))
+
+WHISPER_MODELS = json.loads(Path(__file__).with_name("whisper-models.json").read_text(encoding="utf-8"))
 MODELS = {
-    "whisper-turbo": ("mobiuslabsgmbh/faster-whisper-large-v3-turbo", "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"),
-    "kotoba-v2": ("kotoba-tech/kotoba-whisper-v2.0-faster", "f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc"),
-    "whisper-base": ("Systran/faster-whisper-base", "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"),
-    "whisper-small": ("Systran/faster-whisper-small", "536b0662742c02347bc0e980a01041f333bce120"),
+    **WHISPER_MODELS,
     "qwen3-ja": ("neosophie/Qwen3-ASR-1.7B-JA", "987bda160f2dabfa6757550bcff7cdda2ba0648c"),
     "qwen3-0.6b": ("Qwen/Qwen3-ASR-0.6B", "5eb144179a02acc5e5ba31e748d22b0cf3e303b0"),
     "qwen3-1.7b": ("Qwen/Qwen3-ASR-1.7B", "7278e1e70fe206f11671096ffdd38061171dd6e5"),
-    "whisper-large-v3": ("Systran/faster-whisper-large-v3", "edaa852ec7e145841d8ffdb056a99866b5f0a478"),
 }
 QWEN_MODELS = frozenset(("qwen3-ja", "qwen3-0.6b", "qwen3-1.7b"))
 
@@ -175,7 +176,10 @@ def _handle(root, cache, request, cache_lock, progress=None):
             raise ValueError("認識の性能設定が不正です")
         # Nemotron C ABIのスレッド数とq8_0は固定。効かないWhisper設定だけの
         # 変更で、同じ常駐モデルを破棄・再読込みしない。
-        key = (engine, device, "runtime", "q8_0") if engine == "nemotron-3.5" else (engine, device, threads, compute, workers if engine in MODELS and engine not in QWEN_MODELS else 1)
+        directory = root / engine
+        if engine in WHISPER_MODELS and (shared := request.get("whisperDirectory")):
+            directory = Path(shared)
+        key = (engine, device, "runtime", "q8_0") if engine == "nemotron-3.5" else (engine, device, threads, compute, workers if engine in MODELS and engine not in QWEN_MODELS else 1, directory)
         started = time.perf_counter()
         stage = "model-load"
         with cache_lock:
@@ -187,7 +191,6 @@ def _handle(root, cache, request, cache_lock, progress=None):
                     if hasattr(previous, "close"):
                         previous.close()
                 cache.clear()  # 1ワーカーにつき1モデル。設定変更で旧モデルを保持し続けない。
-                directory = root / engine
                 if not has_model_weights(directory, engine):
                     raise ValueError("モデル未導入。setup-asr.ps1を実行してください")
                 with contextlib.nullcontext():
@@ -304,7 +307,8 @@ def _serve(root, cache, protocol=None):
             model = "whisper-turbo" if engine in ("whisper-turbo-hotwords", "whisper-turbo-nohint") else engine
             key = (model, request.get("device", "cpu"), None if model == "nemotron-3.5" else request.get("cpuThreads", 2),
                    None if model == "nemotron-3.5" else request.get("cudaCompute", "float16"),
-                   request.get("parallelWorkers", 2) if model in MODELS and model not in QWEN_MODELS else 1)
+                   request.get("parallelWorkers", 2) if model in MODELS and model not in QWEN_MODELS else 1,
+                   request.get("whisperDirectory") if model in WHISPER_MODELS else None)
             parallel = (model in MODELS and model not in QWEN_MODELS) or model == "nemotron-3.5"
             changed = key != previous_key
             if changed or not parallel or "requestId" not in request or request.get("operation") == "warmup":

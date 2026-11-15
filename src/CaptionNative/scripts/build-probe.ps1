@@ -4,7 +4,8 @@ $ErrorActionPreference='Stop'
 $sdk=(Resolve-Path -LiteralPath $SdkIncludePath).Path
 if(!(Test-Path "$sdk/c_api/speechapi_c_embedded_speech_config.h")) {throw '公式Speech SDKのbuild/native/includeを指定してください。'}
 $vswhere="${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$vs=& $vswhere -latest -property installationPath
+$vs=& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+if ($LASTEXITCODE -or !$vs) { throw 'Visual StudioのC++ x64ビルドツールが見つかりません。' }
 $cl=Get-ChildItem "$vs/VC/Tools/MSVC/*/bin/Hostx64/x64/cl.exe" | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
 $msvc=Split-Path (Split-Path (Split-Path (Split-Path $cl)))
 $kit="${env:ProgramFiles(x86)}/Windows Kits/10"

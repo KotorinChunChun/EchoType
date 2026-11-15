@@ -7,6 +7,7 @@ public sealed class AgentPaths
     public string Root { get; }
     public string Model => Path.Combine(Root, "model");
     public string RecognitionModels { get; }
+    public bool HasModelOverride { get; }
     public static string DefaultRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EchoType");
     public static string LegacyRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopAgent");
     public AgentPaths(string? root = null, string? modelRoot = null)
@@ -15,6 +16,7 @@ public sealed class AgentPaths
         var relative = Path.GetRelativePath(LegacyRoot, Root);
         if (!Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith("..\\", StringComparison.Ordinal))
             throw new InvalidOperationException("EchoType の保存先に DesktopAgent のフォルダーを指定できません。");
+        HasModelOverride = modelRoot is not null;
         RecognitionModels = modelRoot is null ? Model : Path.GetFullPath(modelRoot);
         if (modelRoot is not null) RequireLocalPath(RecognitionModels, true);
         var parent = Root;

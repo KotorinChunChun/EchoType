@@ -4,7 +4,7 @@ internal static class AppIcon
 {
     public static System.Drawing.Icon CreateTrayIcon()
     {
-        var resource = Application.GetResourceStream(new Uri("pack://application:,,,/EchoType.App;component/Assets/EchoType.ico", UriKind.Absolute))
+        var resource = Application.GetResourceStream(new Uri("pack://application:,,,/EchoType;component/Assets/EchoType.ico", UriKind.Absolute))
             ?? throw new InvalidOperationException("アプリアイコンを読み込めませんでした。");
         using var stream = resource.Stream;
         using var icon = new System.Drawing.Icon(stream, System.Windows.Forms.SystemInformation.SmallIconSize);

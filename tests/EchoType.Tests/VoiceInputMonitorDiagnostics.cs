@@ -13,7 +13,8 @@ internal static class VoiceInputMonitorDiagnostics
         var thread = new Thread(() =>
         {
             var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-            app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/EchoType.App;component/AppStyles.xaml", UriKind.Relative) });
+            var appAssembly = typeof(VoiceInputController).Assembly.GetName().Name;
+            app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri($"/{appAssembly};component/AppStyles.xaml", UriKind.Relative) });
             app.Dispatcher.BeginInvoke(async () =>
             {
                 try { await VoiceInputNativeFocusDiagnostics.VerifyAsync(app, seconds, interactive); await VerifyAsync(app); result = 0; }

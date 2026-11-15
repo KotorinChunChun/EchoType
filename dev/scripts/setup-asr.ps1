@@ -21,8 +21,16 @@ function Install-WhisperGpuRuntime([string]$EnvironmentPython) {
     & $EnvironmentPython -c 'import sys,pathlib; root=pathlib.Path(sys.prefix)/"Lib/site-packages/nvidia/cublas/bin"; assert all((root/name).is_file() for name in ["cublas64_12.dll","cublasLt64_12.dll"]), "cuBLAS DLLがありません"'
     if ($LASTEXITCODE) { throw 'Whisper用CUDA DLLの配置を確認できませんでした。' }
 }
+function Resolve-WhisperGpuPython {
+    $managedRoot = Join-Path $DataRoot 'model/whisper-venv'
+    $managedPython = Join-Path $managedRoot 'Scripts/python.exe'
+    if ((Test-Path -LiteralPath (Join-Path $managedRoot 'ready')) -and (Test-Path -LiteralPath $managedPython)) {
+        return $managedPython
+    }
+    return (Join-Path $DataRoot 'model/venv/Scripts/python.exe')
+}
 if ($GpuRuntimeOnly) {
-    Install-WhisperGpuRuntime (Join-Path $DataRoot 'model/venv/Scripts/python.exe')
+    Install-WhisperGpuRuntime (Resolve-WhisperGpuPython)
     Write-Output 'Whisper用CUDA 12 cuBLASの準備が完了しました。モデル本体は変更していません。'
     return
 }
@@ -81,7 +89,7 @@ if ($qwenModels.Count -gt 0) {
 if ($whisperModels.Count -eq 0) { Write-Output '指定モデルの準備が完了しました。'; return }
 & $asrPython -m pip install --disable-pip-version-check -r (Join-Path $sourceRoot 'requirements.txt')
 if ($LASTEXITCODE) { throw '音声認識ライブラリの導入に失敗しました。' }
-if ($WithGpuRuntime) { Install-WhisperGpuRuntime $asrPython }
+if ($WithGpuRuntime) { Install-WhisperGpuRuntime (Resolve-WhisperGpuPython) }
 & $asrPython (Join-Path $sourceRoot 'worker.py') --download $modelRoot @whisperModels
 if ($LASTEXITCODE) { throw '音声モデルの取得に失敗しました。' }
 Write-Output 'ローカル音声モデルの準備が完了しました。'

@@ -12,6 +12,7 @@ public partial class App : Application
     private bool _ownsInstance;
     private SecureStore? _store;
     private VoiceInputController? _voice;
+    private EchoTypeManagement? _management;
     private Forms.NotifyIcon? _tray;
     private System.Drawing.Icon? _icon;
     private bool _exiting;
@@ -22,22 +23,31 @@ public partial class App : Application
         Console.OutputEncoding = new UTF8Encoding(false);
         var migrate = e.Args.Contains("--migrate-desktop-agent");
         var smoke = e.Args.Contains("--smoke-ui");
+        var managementSmoke = e.Args.Contains("--smoke-management");
+        var isolated = smoke || managementSmoke;
+        var background = e.Args.Contains("--startup");
         try
         {
             var options = Parse(e.Args);
-            var background = options.ContainsKey("--startup");
-            if (smoke && !options.ContainsKey("--data-root"))
+            if (isolated && !options.ContainsKey("--data-root"))
                 throw new ArgumentException("画面試験には --data-root が必要です。");
-            if (migrate && (smoke || background || options.ContainsKey("--open") || options.ContainsKey("--model-root")))
+            if (migrate && (isolated || background || options.ContainsKey("--open") || options.ContainsKey("--model-root") || options.ContainsKey("--launch-origin")))
                 throw new ArgumentException("移行は単独で実行してください。");
             var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.GetValueOrDefault("--data-root") ?? AgentPaths.DefaultRoot));
-            if (smoke && string.Equals(root, AgentPaths.DefaultRoot, StringComparison.OrdinalIgnoreCase))
+            if (isolated && string.Equals(root, AgentPaths.DefaultRoot, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("画面試験には専用の保存先を指定してください。");
             var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root.ToUpperInvariant())))[..24];
             _instance = new Mutex(false, @"Local\EchoType-" + identity);
             try { _ownsInstance = _instance.WaitOne(0); }
             catch (AbandonedMutexException) { _ownsInstance = true; }
-            if (!_ownsInstance) throw new InvalidOperationException("EchoType はこの保存先ですでに起動しています。");
+            if (!_ownsInstance)
+            {
+                if (smoke || migrate) throw new InvalidOperationException("EchoType はこの保存先ですでに起動しています。");
+                if (!background && !await EchoTypeManagement.ShowExistingAsync(root))
+                    throw new InvalidOperationException("起動済みのEchoTypeの画面を表示できませんでした。");
+                Shutdown();
+                return;
+            }
 
             var paths = new AgentPaths(root, options.GetValueOrDefault("--model-root"));
             _store = new SecureStore(paths);
@@ -53,24 +63,26 @@ public partial class App : Application
                 var shared = _store.LoadSettings();
                 var recognition = _store.LoadVoiceInputSettings().Recognition;
                 runtime.ConfigureEngineSettings(shared, recognition);
-                _voice = new(paths, _store, Dispatcher, noAudio: smoke, monitor: !smoke);
+                _voice = new(paths, _store, Dispatcher, noAudio: isolated, monitor: !isolated);
                 EngineSettingsJournal.Change(paths, "startup", recognition, recognition with { Performance = shared.Performance },
                     runtime.EffectiveSettings(recognition, voice: true), voice: true);
             }
             if (smoke)
             {
-                await RunUiSmokeAsync(_voice);
+                await RunUiSmokeAsync(_voice, paths);
                 await ExitAsync();
                 return;
             }
-            CreateTray();
+            CreateTray(paths, isolated);
             SystemEvents.SessionSwitch += SessionSwitch;
             _voice.StartWhisperWarmup();
-            if (!background) _voice.Open();
+            _management = new(Dispatcher, root, options.GetValueOrDefault("--launch-origin") ?? "standalone",
+                () => ShowInput(paths, isolated), () => _ = ExitAsync(), _voice.ManagementStopBlockReason);
+            if (!background) ShowInput(paths, isolated);
         }
         catch (Exception ex)
         {
-            if (migrate || smoke) Console.Error.WriteLine("EchoType: " + ex.GetType().Name + " — " + ex.Message);
+            if (migrate || isolated || background) Console.Error.WriteLine("EchoType: " + ex.GetType().Name + " — " + ex.Message);
             else MessageBox.Show(ex.Message, "EchoType", MessageBoxButton.OK, MessageBoxImage.Error);
             await ExitAsync(1);
         }
@@ -90,8 +102,9 @@ public partial class App : Application
             var name = args[i];
             var value = name switch
             {
-                "--open" or "--startup" or "--migrate-desktop-agent" or "--smoke-ui" => null,
+                "--open" or "--startup" or "--migrate-desktop-agent" or "--smoke-ui" or "--smoke-management" => null,
                 "--data-root" or "--source-root" or "--model-root" when i + 1 < args.Length && !args[i + 1].StartsWith("--") => args[++i],
+                "--launch-origin" when i + 1 < args.Length && args[i + 1] is "host_manual" or "direct_task" or "via_kotorintoys" => args[++i],
                 _ => throw new ArgumentException("起動オプションを確認してください。")
             };
             if (!options.TryAdd(name, value)) throw new ArgumentException("起動オプションが重複しています。");
@@ -101,12 +114,20 @@ public partial class App : Application
         return options;
     }
 
-    private void CreateTray()
+    private void ShowInput(AgentPaths paths, bool isolated)
+    {
+        _voice!.Open();
+        if (!isolated && !_voice.IsPaused) InitialWhisperSetup.ShowIfNeeded(paths, _voice.Settings, _voice.StartWhisperWarmup);
+    }
+
+    private void CreateTray(AgentPaths paths, bool isolated)
     {
         _icon = AppIcon.CreateTrayIcon();
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("音声入力", null, (_, _) => _voice!.Open());
+        menu.Items.Add("音声入力", null, (_, _) => ShowInput(paths, isolated));
         menu.Items.Add("設定", null, (_, _) => _voice!.OpenSettings());
+        if (!isolated)
+            menu.Items.Add("音声認識モデル", null, (_, _) => InitialWhisperSetup.Show(paths, _voice!.Settings, _voice.StartWhisperWarmup));
         var pause = new Forms.ToolStripMenuItem("一時停止");
         pause.Click += (_, _) =>
         {
@@ -117,10 +138,10 @@ public partial class App : Application
         menu.Items.Add(pause);
         menu.Items.Add("終了", null, async (_, _) => await ExitAsync());
         _tray = new Forms.NotifyIcon { Icon = _icon, Text = "EchoType", ContextMenuStrip = menu, Visible = true };
-        _tray.DoubleClick += (_, _) => _voice!.Open();
+        _tray.DoubleClick += (_, _) => ShowInput(paths, isolated);
     }
 
-    private async Task RunUiSmokeAsync(VoiceInputController voice)
+    private async Task RunUiSmokeAsync(VoiceInputController voice, AgentPaths paths)
     {
         voice.Open();
         await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
@@ -145,9 +166,16 @@ public partial class App : Application
         voice.SetPaused(false);
         voice.Open();
         if (voice.IsPaused || !window.IsVisible) throw new InvalidOperationException("再開後に音声入力ウィンドウを表示できません。");
+        InitialWhisperSetup.ShowIfNeeded(paths, voice.Settings, voice.StartWhisperWarmup);
+        if (!Windows.OfType<InitialWhisperSetup>().Any(setup => setup.IsVisible))
+            throw new InvalidOperationException("不足しているモデルの準備画面を表示できません。");
+        await InitialWhisperSetup.CloseAsync();
+        InitialWhisperSetup.ShowIfNeeded(paths, voice.Settings, voice.StartWhisperWarmup);
+        if (Windows.OfType<InitialWhisperSetup>().Any(setup => setup.IsVisible))
+            throw new InvalidOperationException("一度閉じた初回案内が再表示されました。");
         voice.Dismiss();
         if (window.IsVisible) throw new InvalidOperationException("音声入力ウィンドウを閉じられません。");
-        Console.WriteLine("音声入力と設定の表示・終了、ロックと一時停止からの再表示を確認しました。");
+        Console.WriteLine("音声入力と設定、ロックと一時停止、初回モデル案内と再表示の抑止を確認しました。");
     }
 
     private async Task ExitAsync(int code = 0)
@@ -155,13 +183,18 @@ public partial class App : Application
         if (_exiting) return;
         _exiting = true;
         SystemEvents.SessionSwitch -= SessionSwitch;
-        try { if (_voice is not null) await _voice.StopAsync(); }
+        try
+        {
+            await InitialWhisperSetup.CloseAsync();
+            if (_voice is not null) await _voice.StopAsync();
+        }
         catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name); code = 1; }
         finally { Shutdown(code); }
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _management?.Dispose();
         if (_tray is not null)
         {
             _tray.Visible = false;

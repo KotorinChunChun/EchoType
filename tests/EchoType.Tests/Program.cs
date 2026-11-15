@@ -4,6 +4,7 @@ if (args is ["--isolated", var mode]) return IsolatedDesktopDiagnostics.Run(mode
 if (args is ["--isolated-app", var app]) return IsolatedDesktopDiagnostics.Run("app", app);
 if (args is ["--queue-child"]) return VoiceInputQueueDiagnostics.Run();
 if (args is ["--focus-child"]) return VoiceInputMonitorDiagnostics.Run(20);
+if (args is ["--whisper-setup-smoke", var wave]) return await WhisperSetupDiagnostics.RunAsync(wave);
 if (args.Length != 0) return 2;
 
 var root = Path.Combine(AppContext.BaseDirectory, "test-output", Guid.NewGuid().ToString("N"));

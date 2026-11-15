@@ -30,8 +30,9 @@ public sealed class LocalAsrWorker(AgentPaths paths) : IDisposable
     private Process? _process;
     private string _runtime = "";
     private Task? _stderr;
-    public static string PythonPath(AgentPaths paths, string engine) => Path.Combine(paths.RecognitionModels,
-        AsrEngines.IsFastLocal(engine) ? "fast-asr-venv" : AsrEngines.IsQwen(engine) ? "qwen-venv" : "venv", "Scripts", "python.exe");
+    public static string PythonPath(AgentPaths paths, string engine) => AsrEngines.IsWhisper(engine)
+        ? WhisperSetup.PythonPath(paths)
+        : Path.Combine(paths.RecognitionModels, AsrEngines.IsFastLocal(engine) ? "fast-asr-venv" : AsrEngines.IsQwen(engine) ? "qwen-venv" : "venv", "Scripts", "python.exe");
     public static bool IsReady(AgentPaths paths, string engine) => InstallationStatus(paths, engine) == "導入済み";
     public static string InstallationStatus(AgentPaths paths, string engine)
     {
@@ -41,6 +42,8 @@ public sealed class LocalAsrWorker(AgentPaths paths) : IDisposable
         if (!AsrEngines.IsLocal(engine)) return "ローカルモデルの導入対象外";
         if (AsrEngines.IsFastLocal(engine)) return FastInstallationStatus(paths, AsrEngines.ModelId(engine));
         if (!File.Exists(PythonPath(paths, engine))) return "音声認識用Python環境がありません。「導入する」で準備できます。";
+        if (AsrEngines.IsWhisper(engine) && !paths.HasModelOverride)
+            return WhisperModelStore.HasWeights(paths, engine) ? "導入済み" : "モデルが未準備です。「音声認識モデル」から準備できます。";
         var directory = Path.Combine(paths.RecognitionModels, "asr", AsrEngines.ModelId(engine));
         if (!HasWeights(directory, AsrEngines.IsQwen(engine)) || !File.Exists(Path.Combine(directory, "config.json")))
             return "モデル本体がありません。「導入する」で取得できます。";
@@ -97,7 +100,7 @@ public sealed class LocalAsrWorker(AgentPaths paths) : IDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException) { return false; }
     }
-    private static bool HasWeights(string directory, bool qwen)
+    internal static bool HasWeights(string directory, bool qwen)
     {
         try
         {
@@ -229,6 +232,8 @@ public sealed class LocalAsrWorker(AgentPaths paths) : IDisposable
                 lock (_sync) { ObjectDisposedException.ThrowIf(_disposed, this); EnsureStarted(engine); session = _session!; session.Pending[id] = response; if (progress is not null) session.Progress[id] = progress; }
                 var message = JsonSerializer.SerializeToElement(request).EnumerateObject().ToDictionary(p => p.Name, p => (object)p.Value);
                 message["requestId"] = id;
+                if (AsrEngines.IsWhisper(engine) && WhisperModelStore.FindPublished(paths, engine) is { } modelPath)
+                    message["whisperDirectory"] = modelPath;
                 if (progress is not null) message["notifyProgress"] = true;
                 await session.Process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), deadline.Token).ConfigureAwait(false);
                 await session.Process.StandardInput.FlushAsync(deadline.Token).ConfigureAwait(false);

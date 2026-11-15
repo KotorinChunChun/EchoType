@@ -78,7 +78,7 @@
         "resolved": "10.0.0",
         "contentHash": "nHlCdjoeReiSx4kzgPEwPRlbOAyuVFwndXTZZT+CLnHb8UIfB+YMgpQjQ7faYvs3xU8wyvpb6dt+U+HwdlbG7w=="
       },
-      "echotype.app": {
+      "EchoType": {
         "type": "Project",
         "dependencies": {
           "EchoType.Windows": "[0.1.0, )"

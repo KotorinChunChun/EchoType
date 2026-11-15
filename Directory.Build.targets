@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup Condition="'$(SelfContained)' == 'true' and '$(KotorinToysRuntimeVersion)' != ''">
+    <KnownFrameworkReference Update="Microsoft.NETCore.App;Microsoft.WindowsDesktop.App;Microsoft.WindowsDesktop.App.WPF;Microsoft.WindowsDesktop.App.WindowsForms"
+        DefaultRuntimeFrameworkVersion="$(KotorinToysRuntimeVersion)" LatestRuntimeFrameworkVersion="$(KotorinToysRuntimeVersion)" />
+  </ItemGroup>
+</Project>

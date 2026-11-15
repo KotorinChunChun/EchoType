@@ -14,7 +14,8 @@ internal static class VoiceInputQueueDiagnostics
         var thread = new Thread(() =>
         {
             var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-            app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/EchoType.App;component/AppStyles.xaml", UriKind.Relative) });
+            var appAssembly = typeof(VoiceInputController).Assembly.GetName().Name;
+            app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri($"/{appAssembly};component/AppStyles.xaml", UriKind.Relative) });
             app.Dispatcher.BeginInvoke(async () =>
             {
                 VoiceInputController? controller = null;
@@ -48,14 +49,14 @@ internal static class VoiceInputQueueDiagnostics
                         "ログ展開時も比較のスクロール領域と下の編集欄が画面内に表示");
                     async Task Record(int number)
                     {
-                        keys[0x5B] = true; keys[0xA2] = true; keys[0xA0] = true; await Task.Delay(150);
+                        keys[0xA2] = true; keys[0xA0] = true; await Task.Delay(150);
                         Require(((FrameworkElement)window.FindName("RecordingTint")).Visibility == Visibility.Visible, "録音中は外周余白に薄赤表示");
                         var tint = (Border)window.FindName("RecordingTint");
                         Require(((System.Windows.Media.SolidColorBrush)window.Background).Color == System.Windows.Media.Color.FromRgb(245, 248, 248) && tint.Background is null && tint.BorderThickness == new Thickness(10) && !tint.IsHitTestVisible, "赤色は外周10pxだけで内容を覆わない");
                         var input = inputs.Last(); input.Feed(Enumerable.Repeat((byte)number, 48000).ToArray());
                         await Task.Delay(100);
                         Require(((TextBox)window.FindName("LiveText")).Text == (number == 0 ? "" : $"途中{number}"), "押下中のPCMがWindows途中表示へ反映");
-                        await Task.Delay(850); keys[0xA0] = false; keys[0xA2] = false; keys[0x5B] = false; await Task.Delay(150);
+                        await Task.Delay(850); keys[0xA0] = false; keys[0xA2] = false; await Task.Delay(150);
                         Require(((FrameworkElement)window.FindName("RecordingTint")).Visibility == Visibility.Collapsed, "録音終了で薄赤表示を解除");
                     }
                     await Record(1); await Until(() => calls.GetValueOrDefault(1) == 2);

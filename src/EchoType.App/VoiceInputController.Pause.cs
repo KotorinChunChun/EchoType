@@ -9,7 +9,6 @@ public sealed partial class VoiceInputController
 
     internal string? ManagementStopBlockReason()
     {
-        if (InitialWhisperSetup.IsInstalling) return "音声認識モデルの準備完了または中止後に再試行してください。";
         return ConfigurationLocked || _automaticProcessing || _automaticSending || _traySettings is not null || _window?.SettingsOpen == true
             ? "録音・認識・入力または設定の終了後に再試行してください。"
             : null;
@@ -24,7 +23,6 @@ public sealed partial class VoiceInputController
         Interlocked.Increment(ref _pauseGeneration);
         if (paused)
         {
-            _warmupCancellation?.Cancel();
             _window?.CloseSettings();
             Dismiss();
             _lastExternal = null;
@@ -33,6 +31,5 @@ public sealed partial class VoiceInputController
         }
 
         TrackTarget();
-        StartWhisperWarmup();
     }
 }

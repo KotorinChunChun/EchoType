@@ -16,12 +16,8 @@ try {
     }
     $common = @('-c', $Configuration, '-m:1', '-p:UseSharedCompilation=false') + $restore
     $app = 'src/EchoType.App'
-    $captions = 'src/EchoType.Captions'
-    $speech = 'src/EchoType.WindowsSpeech'
     $version = ([xml](Get-Content -LiteralPath Directory.Build.props -Raw)).Project.PropertyGroup.Version
     $output = if ($Configuration -eq 'Release') { "release/v$version" } else { 'release/Debug' }
     dotnet publish $app @common --no-self-contained -o $output
-    dotnet publish $captions @common --no-self-contained -o "$output/Captions"
-    dotnet publish $speech @common --no-self-contained -o "$output/WindowsSpeech"
 }
 finally { Pop-Location }

@@ -85,35 +85,29 @@ public sealed partial class VoiceInputController
         // 元の失敗行を選び直しても、同じ録音の最新の試行を使い、採用済みの音声を繰り返さない。
         entry = session.Entries.Last(item => item.RecordingNumber == entry.RecordingNumber);
         if (!entry.Finished || entry.Metadata is null || entry.RecognitionSettings is null) return;
-        var engines = entry.Results.Where(r => !r.Succeeded).Select(r => r.EngineId).ToArray();
-        if (entry.RecognitionSettings.ExternalSpeech.Enabled != Settings.ExternalSpeech.Enabled ||
-            entry.RecognitionSettings.ExternalSpeech.Enabled && entry.RecognitionSettings.ExternalSpeech != Settings.ExternalSpeech)
+        if (entry.RecognitionSettings.FinalSpeech() != Settings.FinalSpeech())
         {
             Say("認識先が変わりました。現在の認識先で使う場合は録音し直してください。");
             return;
         }
-        if (Settings.AutomaticInput) engines = engines.Where(e => e == Settings.RecognitionModels().First()).Take(1).ToArray();
-        if (engines.Length == 0) { Say("失敗した認識はありません。"); return; }
+        if (entry.Results.FirstOrDefault() is not { Succeeded: false }) { Say("失敗した認識はありません。"); return; }
         try
         {
             var wave = session.Cache.Read(entry.CachePath);
-            var retry = new VoiceInputLogEntry { Number = session.Buffer.Add(), RetrySourceNumber = entry.RecordingNumber, LiveEngine = entry.LiveEngine, LiveFinished = true,
-                Status = $"#{entry.Number} を再試行", Seconds = entry.Seconds, Metadata = entry.Metadata,
-                RecognitionSettings = entry.RecognitionSettings with { Models = engines, AutomaticInput = Settings.AutomaticInput,
-                    Recognition = entry.RecognitionSettings.Recognition with { AsrLengthCheckEnabled = !Settings.AutomaticInput && entry.RecognitionSettings.Recognition.AsrLengthCheckEnabled } } };
+            var retry = new VoiceInputLogEntry { Number = ++session.RecordingSequence, RetrySourceNumber = entry.RecordingNumber,
+                LiveEngine = "", LiveFinished = true, Status = $"#{entry.Number} を再試行", Seconds = entry.Seconds,
+                Metadata = entry.Metadata, RecognitionSettings = entry.RecognitionSettings };
             try { retry.CachePath = session.Cache.Save(retry.Number, wave); } finally { Array.Clear(wave); }
-            session.Entries.Add(retry); session.Buffer.Schedule(retry.Number, engines); RefreshState();
+            session.Entries.Add(retry); RefreshState();
             if (Settings.AutomaticInput)
             {
                 _automaticSession = session; _automaticFaulted = false;
                 var retryIndex = _automaticEntries.FindIndex(item => ReferenceEquals(item.Entry, entry));
                 _automaticEntries.RemoveAll(item => ReferenceEquals(item.Entry, entry));
-                session.Buffer.ConsumeRecordings([entry.Number]);
-                _automaticDraftSources.Add(entry);
-                _automaticEntries.Insert(retryIndex < 0 ? _automaticEntries.Count : retryIndex, (retry, engines[0]));
+                entry.DraftHandled = true;
+                _automaticEntries.Insert(retryIndex < 0 ? _automaticEntries.Count : retryIndex, (retry, AsrEngines.ExternalTranscription));
             }
             await RecognizeQueuedAsync(session, retry, retry.Metadata, retry.RecognitionSettings);
-            Say(Settings.AutomaticInput ? "失敗分を再試行しました。" : "失敗分を再試行しました。入力する候補を選んでください。");
         }
         catch (Exception ex) { Say("再試行できません: " + ex.Message); }
     }

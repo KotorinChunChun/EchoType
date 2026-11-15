@@ -38,13 +38,13 @@
      </Style></Window.Resources>
  <Grid><ScrollViewer x:Name="OuterViewport" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="10">
  <Grid x:Name="MainLayout" MinWidth="750" MinHeight="550" Width="{Binding ViewportWidth, ElementName=OuterViewport}" Height="{Binding ViewportHeight, ElementName=OuterViewport}">
-  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition x:Name="ComparisonRow" Height="*"/><RowDefinition x:Name="DraftRow" Height="Auto"/></Grid.RowDefinitions>
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition x:Name="ComparisonRow" Height="Auto"/><RowDefinition x:Name="DraftRow" Height="*"/></Grid.RowDefinitions>
   <Border x:Name="TargetGroup" Background="#E4F0EE" CornerRadius="10" Padding="6" Margin="0,0,0,6">
    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="135"/></Grid.ColumnDefinitions>
     <TextBox x:Name="TargetPath" IsReadOnly="True" MinHeight="56" Margin="0" VerticalContentAlignment="Center" TextWrapping="Wrap" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled" AutomationProperties.AutomationId="VoiceTargetPath"/>
     <Button x:Name="TargetButton" Grid.Column="1" Content="⌖ ターゲット" Margin="10,0,0,0" MinHeight="56" VerticalAlignment="Stretch" ToolTip="入力欄の文字位置へドラッグして指定" PreviewMouseLeftButtonDown="Target_Down" PreviewMouseLeftButtonUp="Target_Up" LostMouseCapture="Target_LostCapture" AutomationProperties.AutomationId="VoiceTargetButton"/>
    </Grid>  </Border>
-  <Expander x:Name="CapturePanel" Grid.Row="1" Header="録音デバイス・波形・リアルタイム文字起こし" IsExpanded="True" Expanded="CapturePanel_Changed" Collapsed="CapturePanel_Changed" Background="#E4F0EE" Padding="6" Margin="0,0,0,4">
+  <Expander x:Name="CapturePanel" Grid.Row="1" Header="録音デバイス・波形" IsExpanded="True" Expanded="CapturePanel_Changed" Collapsed="CapturePanel_Changed" Background="#E4F0EE" Padding="6" Margin="0,0,0,4">
    <StackPanel>
     <DockPanel x:Name="DevicePanel" Margin="0,0,0,8">
      <CheckBox Content="最前面表示" DockPanel.Dock="Right" IsChecked="{Binding Topmost, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}" Margin="12,0,0,0" VerticalAlignment="Center"/>
@@ -56,18 +56,18 @@
      <Border Background="#18353A" CornerRadius="5" Height="52" Margin="0,0,16,0" ClipToBounds="True"><Canvas x:Name="WaveCanvas" ClipToBounds="True" SizeChanged="Wave_SizeChanged"><Polyline x:Name="WaveLine" Stroke="#7BE3C6" StrokeThickness="1.3"/></Canvas></Border>
      <StackPanel Grid.Column="1"><TextBlock x:Name="LevelText" Text="入力 −96.0 dBFS / peak 0%" FontSize="12"/><ProgressBar x:Name="LevelBar" Minimum="0" Maximum="96" Height="10" Margin="0,5,0,4" Foreground="#16826E"/><TextBlock x:Name="ActualDeviceText" Text="録音待ち" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel>
     </Grid>
-    <Border x:Name="LiveGroup" Background="#F7FAFA" CornerRadius="5" Padding="8" Margin="0,8,0,0">
-     <StackPanel><TextBlock x:Name="LiveLabel" Text="精度優先の途中認識（押下音声のみ）" FontSize="11" Foreground="#537D76"/>
+    <Border x:Name="LiveGroup" Visibility="Collapsed" Background="#F7FAFA" CornerRadius="5" Padding="8" Margin="0,8,0,0">
+     <StackPanel><TextBlock x:Name="LiveLabel" Text="即時表示" FontSize="11" Foreground="#537D76"/>
       <TextBox x:Name="LiveText" IsReadOnly="True" TextWrapping="Wrap" MinHeight="35" MaxHeight="65" Margin="0" Padding="0,4" BorderThickness="0" Background="Transparent" VerticalScrollBarVisibility="Auto" AutomationProperties.AutomationId="VoiceLiveText"/>
      </StackPanel>
     </Border>
    </StackPanel>
   </Expander>
   <ScrollViewer x:Name="ComparisonViewport" Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
-   <Border x:Name="QueueGroup" Background="#E8EDF7" CornerRadius="8" Padding="6" Margin="0,0,0,6"><Expander x:Name="QueuePanel" Header="録音キュー・ログ（追記・削除で完了分を消去）">
+   <Border x:Name="QueueGroup" Background="#E8EDF7" CornerRadius="8" Padding="6" Margin="0,0,0,6"><Expander x:Name="QueuePanel" Header="録音キュー">
     <StackPanel>
      <DataGrid x:Name="QueueLog" Height="115" SelectionMode="Single" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" AutomationProperties.AutomationId="VoiceQueueLog">
-      <DataGrid.Columns><DataGridTextColumn Header="#" Binding="{Binding Number}" Width="35"/><DataGridTextColumn Header="開始" Binding="{Binding Time}" Width="75"/><DataGridTextColumn Header="秒" Binding="{Binding Seconds, StringFormat=F1}" Width="45"/><DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="130"/><DataGridTextColumn Header="途中認識" Binding="{Binding LiveText}" Width="*"/>
+      <DataGrid.Columns><DataGridTextColumn Header="#" Binding="{Binding Number}" Width="35"/><DataGridTextColumn Header="開始" Binding="{Binding Time}" Width="75"/><DataGridTextColumn Header="秒" Binding="{Binding Seconds, StringFormat=F1}" Width="45"/><DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="130"/>
        <DataGridTemplateColumn Header="音声" Width="65"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="再生" Tag="{Binding}" IsEnabled="{Binding CanReplay}" Click="Play_Click" Margin="0" MinHeight="24" Padding="4,0"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
       </DataGrid.Columns>
      </DataGrid>
@@ -75,31 +75,10 @@
      <TextBox Text="{Binding SelectedItem.Details, ElementName=QueueLog, Mode=OneWay}" IsReadOnly="True" Height="65" Margin="0" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
     </StackPanel>
    </Expander></Border>
-   <Border x:Name="CandidateGroup" Background="#E6F1ED" CornerRadius="8" Padding="6"><StackPanel><DockPanel Margin="0,0,0,4">
-    <ToggleButton x:Name="AutomaticInputToggle" Style="{StaticResource AutomaticToggleStyle}" DockPanel.Dock="Right" Content="自動採用" Width="90" Height="28" Checked="AutomaticInput_Changed" Unchecked="AutomaticInput_Changed" ToolTip="先頭モデルの認識結果を自動採用" AutomationProperties.AutomationId="VoiceAutomaticInput">
-
-    </ToggleButton>
-    <TextBlock x:Name="CandidateHeading" Text="候補文字列" FontWeight="SemiBold" VerticalAlignment="Center"/>
-   </DockPanel>
-   <ItemsControl x:Name="Cards" HorizontalContentAlignment="Stretch"><ItemsControl.ItemTemplate><DataTemplate>
-    <Border BorderBrush="#C7DCDA" BorderThickness="1" CornerRadius="7" Background="#F7FAFA" Padding="6" Margin="0,0,0,4">
-     <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="310"/><ColumnDefinition Width="*"/><ColumnDefinition Width="64"/><ColumnDefinition Width="64"/></Grid.ColumnDefinitions>
-      <ComboBox ItemsSource="{Binding Engines}" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding EngineId, Mode=TwoWay}" IsEnabled="{Binding Editable}" Height="36" MinHeight="36" Margin="0,0,8,0"/>
-      <StackPanel Grid.Column="1" Height="36" VerticalAlignment="Center" Margin="0,0,8,0"><TextBlock Text="{Binding Summary}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Summary}"/><ProgressBar Value="{Binding SpeedPercent, Mode=OneWay}" Maximum="100" Height="8" Margin="0,5,0,0" Foreground="#278C83" ToolTip="累計処理時間の比較。結果が届くたびに全モデルを同じ最大値で再計算" AutomationProperties.AutomationId="VoiceTimeBar"/></StackPanel>
-      <Button Grid.Column="2" Content="追記" Tag="{Binding}" Click="Append_Click" IsEnabled="{Binding CanConfirm}" Height="36" MinHeight="36" Margin="0" Padding="8,3" AutomationProperties.AutomationId="VoiceConfirmButton"/>
-      <Button Grid.Column="3" Content="削除" Click="Delete_Click" IsEnabled="{Binding CanClear}" Height="36" MinHeight="36" Margin="4,0,0,0" Padding="8,3" ToolTip="全モデルの完了済み候補だけを消去。未完了は継続" AutomationProperties.AutomationId="VoiceDeleteButton"/>
-      <Grid Grid.Row="1" Grid.ColumnSpan="4">
-      <TextBox Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding ReadOnly}" AcceptsReturn="True" MaxLength="16000" Height="64" FontSize="16" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,4,0,0" Padding="6" AutomationProperties.AutomationId="VoicePreviewText"/>
-      <Border Width="30" Height="30" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0" Background="#F7FAFA" CornerRadius="15" IsHitTestVisible="False" ToolTip="文字起こし処理中" AutomationProperties.AutomationId="VoiceProcessingSpinner">
-       <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsProcessing}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style>
-       <Path Width="20" Height="20" Data="M 10,1 A 9,9 0 1 1 1,10" Stroke="#16826E" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
-        <Path.RenderTransform><RotateTransform/></Path.RenderTransform>
-        <Path.Style><Style TargetType="Path"><Style.Triggers><Trigger Property="IsVisible" Value="True"><Trigger.EnterActions><BeginStoryboard Name="Spin"><Storyboard><DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)" From="0" To="360" Duration="0:0:0.8" RepeatBehavior="Forever"/></Storyboard></BeginStoryboard></Trigger.EnterActions><Trigger.ExitActions><RemoveStoryboard BeginStoryboardName="Spin"/></Trigger.ExitActions></Trigger></Style.Triggers></Style></Path.Style>
-       </Path>
-      </Border></Grid>
-     </Grid>
-    </Border>
-   </DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Border>
+   <Border Background="#E6F1ED" CornerRadius="8" Padding="6"><DockPanel>
+    <ToggleButton x:Name="AutomaticInputToggle" Style="{StaticResource AutomaticToggleStyle}" DockPanel.Dock="Right" Content="自動処理" Width="90" Height="28" Checked="AutomaticInput_Changed" Unchecked="AutomaticInput_Changed" ToolTip="確定した文字の整形・入力を自動で実行" AutomationProperties.AutomationId="VoiceAutomaticInput"/>
+    <TextBlock x:Name="RecognitionText" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.AutomationId="VoiceRecognitionStatus" AutomationProperties.LiveSetting="Polite"/>
+   </DockPanel></Border>
   </StackPanel></ScrollViewer>
   <Border x:Name="DraftGroup" Grid.Row="4" Background="#F3EFE3" CornerRadius="8" Padding="6" Margin="0,6,0,0"><Grid>
    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>

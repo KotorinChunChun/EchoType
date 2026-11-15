@@ -1,7 +1,6 @@
 using EchoType.Core;
 using EchoType.Windows;
 using NAudio.Wave;
-using System.Collections.Concurrent;
 using System.Windows.Threading;
 
 namespace EchoType.App;
@@ -10,14 +9,7 @@ public sealed partial class VoiceInputController
 {
     private readonly AgentPaths _paths;
     private readonly SecureStore _store;
-    private readonly AsrService[] _asrs;
-    private readonly AsrService _liveAsr;
-    private readonly Dictionary<string, RecognitionPool> _pools = [];
-    private sealed class RecognitionPool
-    {
-        public SemaphoreSlim Workers { get; } = new(2, 2);
-        public ConcurrentQueue<int> Lanes { get; } = new(new[] { 0, 1 });
-    }
+    private readonly SemaphoreSlim _recognitionSlots = new(2, 2);
     private readonly Dispatcher _dispatcher;
     private readonly bool _noAudio;
     private readonly bool _monitorTargets;
@@ -65,7 +57,6 @@ public sealed partial class VoiceInputController
     }
     private readonly HashSet<Recording> _previewRecordings = [];
     public VoiceInputSettings Settings { get; private set; }
-    public string[] ModelSpeedOrder { get; }
     public event Action<string>? Status;
     private bool ConfigurationLocked => _busy || _capture is not null || (_session?.Pending ?? 0) > 0;
     public VoiceInputController(AgentPaths paths, SecureStore store, Dispatcher dispatcher, bool noAudio, bool monitor,
@@ -79,13 +70,10 @@ public sealed partial class VoiceInputController
         _paths = paths; _store = store; _dispatcher = dispatcher; _noAudio = noAudio;
         _monitorTargets = monitor; _readTargetFocus = readTargetFocus ?? VoiceInputTarget.CaptureFocusStamp;
         _captureOpenTarget = captureOpenTarget ?? VoiceInputTarget.CaptureRemembered;
-        Settings = store.LoadVoiceInputSettings().LocalOnly();
-        ModelSpeedOrder = VoiceModelSpeed.Fallback;
+        Settings = store.LoadVoiceInputSettings();
         _commonSettings = Settings; _profiles = store.GetVoiceProfiles(); _words = store.GetPersonalWords();
         _formatCodex = formatter is null ? new CodexClient(paths) : null;
         _format = formatter ?? _formatCodex!.FormatVoiceInputAsync;
-        _asrs = [new(paths, voiceInputBudget: true), new(paths, voiceInputBudget: true)];
-        _liveAsr = new(paths, voiceInputBudget: true);
         _openInput = openInput ?? (device => device.Open());
         _recognize = recognizer; _liveFactory = liveFactory ?? CreateLive;
         _meterTimer.Tick += (_, _) => UpdateMeter();
@@ -118,12 +106,8 @@ public sealed partial class VoiceInputController
     }
     private IVoiceInputLive CreateLive()
     {
-        var engine = Settings.LiveEngine;
-        var config = Effective(Settings).Recognition with { CloudTranscription = false, CodexEnabled = false, AsrLengthCheckEnabled = false };
-        if (engine == AsrEngines.WindowsCaptions) return _voiceCaptionPreview = new(_voiceCaptionSnapshot);
-        if (engine == "windows") return new VoiceInputLive();
-        return new VoiceInputPreview(new VoiceInputLive(),
-            new VoiceInputAccurateLive((segment, ct) => _liveAsr.RecognizeAsync(engine, segment, config, ct, purpose: RecognitionPurpose.Immediate)));
+        var speech = Settings.PreviewSpeech();
+        return new VoiceInputAccurateLive((segment, ct) => ExternalSpeechRecognizer.RecognizeAsync(segment.Wave, speech, ct));
     }
     private void TrackTarget()
     {
@@ -165,7 +149,7 @@ public sealed partial class VoiceInputController
     {
         if (_session is null)
         {
-            _session = new(_paths); _window?.BindLog(_session.Entries); _window?.ResetResults();
+            _session = new(_paths); _window?.BindLog(_session.Entries);
         }
         return _session;
     }
@@ -188,13 +172,14 @@ public sealed partial class VoiceInputController
         if (!wasVisible || !ReferenceEquals(_placedTarget, _target)) { _placedTarget = _target; Track(_window.PlaceNearTargetAsync(_target)); }
         if (_window.WindowState == WindowState.Minimized) _window.WindowState = WindowState.Normal;
         VisibilityChanged(); UpdateMeter(); _window.FocusDraft();
+        ApplyFinalResults(session);
         if (_target is null && _lastExternalFocus.Window != 0 && _monitorTargets)
             Track(CaptureTargetForOpenAsync(session, _lastExternalFocus, ++_targetCaptureVersion));
     }
     public void OpenSettings()
     {
         if (_stopping || _sessionLocked || ConfigurationLocked || _window?.SettingsOpen == true || _traySettings is not null) return;
-        var dialog = _traySettings = new VoiceInputSettingsWindow(this, Settings.Models.ToArray());
+        var dialog = _traySettings = new VoiceInputSettingsWindow(this);
         if (_window?.IsVisible == true) dialog.Owner = _window;
         else dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
         try { if (dialog.ShowDialog() == true) _window?.ShowProfileSettings(Settings); }
@@ -205,13 +190,9 @@ public sealed partial class VoiceInputController
         if (ConfigurationLocked) throw new InvalidOperationException("録音・認識の終了後に設定を保存してください。");
         var shortcut = settings.GetRecordingShortcut();
         var keysChanged = shortcut != Settings.GetRecordingShortcut();
-        var previous = Settings.Recognition;
         PersistSettings(settings);
-        if (settings.ExternalSpeech.Enabled) _warmupCancellation?.Cancel();
-        var saved = settings.Recognition with { Performance = _store.LoadSettings().Performance };
-        var logged = EngineSettingsJournal.Change(_paths, "saved", previous, saved, _liveAsr.EffectiveSettings(saved), voice: true);
-        Status?.Invoke((EngineRestartNotice.Length > 0 ? EngineRestartNotice : "音声入力の設定を保存しました。") + (logged ? "" : "診断ログを保存できません。"));
-        UpdateVoiceCaptions();
+        _window?.ShowProfileSettings(Settings);
+        Say("音声入力の設定を保存しました。");
         if (keysChanged) _keyboard?.Configure(shortcut);
     }
     public void SelectDevice(InputDevice device)
@@ -226,7 +207,6 @@ public sealed partial class VoiceInputController
         _explicitDevice == new InputDevice(Settings.Recognition.DeviceNumber, Settings.Recognition.DeviceName));
     public void VisibilityChanged()
     {
-        UpdateVoiceCaptions();
         if (_stopping || _paused || _noAudio || _window?.IsVisible != true) { StopMonitor(); return; }
         if (_capture is not null || _inputMonitor is not null) return;
         try
@@ -253,7 +233,7 @@ public sealed partial class VoiceInputController
     }
     private void Say(string message) { _window?.SetStatus(message); Status?.Invoke("音声入力: " + message); }
     private void RefreshState() => _window?.SetActivity(_capture is not null, _session?.Pending ?? 0, _busy || _loadingTarget || _automaticProcessing || Settings.AutomaticInput && (_automaticEntries.Count > 0 || _automaticDraftRequested) && !_automaticFaulted);
-    private void SetBusy(bool busy) { _busy = busy; RefreshState(); }
+    private void SetBusy(bool busy) { _busy = busy; RefreshState(); if (!busy && _session is { } session) ApplyFinalResults(session); }
     private void Track(Task task)
     {
         _tasks.Add(task); _ = Observe();
@@ -276,17 +256,15 @@ public sealed partial class VoiceInputController
         VoiceInputCapture? startingCapture = null;
         try
         {
-            if (!Settings.ExternalSpeech.Enabled && session.Pending == 0 && _window is not null)
-                SaveSettings(Settings with { Models = _window.PreviewCards.Select(c => c.EngineId).ToArray() });
-            Settings.Validate(); StopPlayback(); StopMonitor();
+            Settings.Validate();
+            if (_recognize is null) Settings.FinalSpeech().ValidateEndpoint();
+            StopPlayback(); StopMonitor();
             _window?.ResetFormattingDiff();
             var device = ResolveDevice(); _recordingDevice = device.Name;
-            if (UsesVoiceCaptions() && (_voiceCaptionSnapshot is not { Ready: true } || !WindowsCaptionComparison.LiveReady(AudioSourceKind.Microphone, VoiceCaptionSettings())))
-                throw new InvalidOperationException("Windows字幕の準備が完了していません。既定マイクと日本語の設定を確認し、字幕を使用中の処理が終わってから押し直してください。");
-            var noPreview = Settings.AutomaticInput || Settings.ExternalSpeech.Enabled;
+            var noPreview = !Settings.LiveDisplayEnabled;
             var live = startingLive = noPreview ? new NoPreview() : _liveFactory();
             var capture = startingCapture = new VoiceInputCapture(_openInput(device), Settings.MaximumSeconds);
-            var entry = new VoiceInputLogEntry { Number = session.Buffer.Add(), LiveEngine = noPreview ? "" : Settings.LiveEngine }; session.Entries.Add(entry);
+            var entry = new VoiceInputLogEntry { Number = ++session.RecordingSequence, LiveEngine = noPreview ? "" : Settings.PreviewSpeech().Model }; session.Entries.Add(entry);
             var effective = Effective(Settings);
             var recording = new Recording(session, entry, capture, live, effective with { Recognition = effective.Recognition with { DeviceNumber = device.Number, DeviceName = device.Name } }); _recording = recording; _capture = capture;
             _previewRecordings.Add(recording);
@@ -298,9 +276,13 @@ public sealed partial class VoiceInputController
                 if (!Current(session) || !ReferenceEquals(_recording, recording)) return;
                 entry.LiveText = text; entry.Changed(); _window?.ShowLive(text, false);
             });
+            if (live is VoiceInputAccurateLive preview) preview.Failed += error => _dispatcher.BeginInvoke(() =>
+            {
+                if (Current(session) && ReferenceEquals(_recording, recording)) _window?.ShowLiveError(error);
+            });
             capture.LimitReached += () => _dispatcher.BeginInvoke(() => { if (ReferenceEquals(_recording, recording)) { _keyboard?.Reset(); ReleaseRecording(true); } });
             capture.Interrupted += () => _dispatcher.BeginInvoke(() => { if (ReferenceEquals(_recording, recording)) { ReleaseRecording(false); Say("マイク停止により今回の録音を破棄しました。"); } });
-            capture.Start(); _meterTimer.Start(); RefreshState(); _window?.ShowLive("", false);
+            capture.Start(); _meterTimer.Start(); RefreshState(); _window?.ResetLive();
             if (stamp.Window != 0 && !keepAutomaticTarget)
             {
                 _target = null; Track(CaptureTargetAndShowAsync(recording, stamp));
@@ -312,6 +294,7 @@ public sealed partial class VoiceInputController
             startingCapture?.Dispose(); startingLive?.Dispose();
             if (_recording is not null) ReleaseRecording(false);
             Open(); Say(ex.Message);
+            _window?.ShowRecognition(ex.Message, error: true);
         }
     }
     private void SayRecording(VoiceInputLogEntry entry) => Say($"録音 #{entry.Number} … 録音キーを離すと全文認識。認識中も次の録音を開始できます。");
@@ -352,21 +335,21 @@ public sealed partial class VoiceInputController
             recording.Capture.Dispose();
             if (!Current(session)) return;
             VisibilityChanged();
-            if (segment is null) { entry.Status = "短押し・中止で破棄"; _automaticEntries.RemoveAll(item => ReferenceEquals(item.Entry, entry)); return; }
+            if (segment is null) { entry.DraftHandled = true; entry.Status = "短押し・中止で破棄"; _automaticEntries.RemoveAll(item => ReferenceEquals(item.Entry, entry)); return; }
             entry.Seconds = segment.Seconds;
-            var mode = recording.Settings with { AutomaticInput = recording.Settings.AutomaticInput || Settings.AutomaticInput };
-            var recognitionSettings = mode with { Models = mode.RecognitionModels(),
-                Recognition = mode.Recognition with { AsrLengthCheckEnabled = !mode.AutomaticInput && mode.Recognition.AsrLengthCheckEnabled } };
+            var recognitionSettings = recording.Settings;
             entry.Metadata = segment with { Wave = [] }; entry.RecognitionSettings = recognitionSettings;
             entry.CachePath = session.Cache.Save(entry.Number, segment.Wave);
             entry.Status = "認識待ち"; entry.Changed();
-            session.Buffer.Schedule(entry.Number, recognitionSettings.Models); RenderResults(session);
             Track(RecognizeQueuedAsync(session, entry, segment with { Wave = [] }, recognitionSettings)); queued = true;
             var live = await recording.Live.CompleteAsync(session.Cancellation.Token);
             if (!Current(session)) return;
             entry.LiveText = live.Text; entry.LiveError = live.Error;
-            if (live.Error.Length > 0) Say("途中認識: " + live.Error);
-            if (_recording is null && ReferenceEquals(session.Entries.LastOrDefault(), entry)) _window?.ShowLive(live.Text, true);
+            if (_recording is null && ReferenceEquals(session.Entries.LastOrDefault(), entry))
+            {
+                _window?.ShowLive(live.Text, true);
+                if (live.Error.Length > 0) _window?.ShowLiveError(live.Error);
+            }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (Current(session)) { entry.LiveError = ex.Message; entry.Status = "失敗: " + ex.Message; Say(ex.Message); } }
@@ -377,7 +360,8 @@ public sealed partial class VoiceInputController
             _previewRecordings.Remove(recording);
             if (Current(session))
             {
-                if (!queued) { entry.Finished = true; RenderResults(session); }
+                if (!queued) entry.Finished = true;
+                ApplyFinalResults(session);
                 entry.Changed(); RefreshState(); VisibilityChanged(); MaybeCloseEmpty(session);
                 TryAutomaticInput();
             }
@@ -385,95 +369,73 @@ public sealed partial class VoiceInputController
     }
     private async Task RecognizeQueuedAsync(VoiceInputSession session, VoiceInputLogEntry entry, SpeechSegment metadata, VoiceInputSettings settings)
     {
-        var engines = settings.Models.Where(m => m.Length > 0).Distinct().ToArray();
-        await Task.WhenAll(engines.Select(RecognizeModelAsync));
-        if (!Current(session)) return;
-        entry.Finished = true;
-        entry.Status = entry.Results.Any(r => !r.Succeeded) ? "認識終了・失敗あり" : "認識完了";
-        entry.Changed(); RefreshState();
-        if (_capture is null && !Settings.AutomaticInput) Say(session.Pending > 0 ? $"残り{session.Pending}件を認識中。追加録音できます。" : "全文認識完了。追記で編集欄へ確定できます。追加録音も可能です。");
-        MaybeCloseEmpty(session);
-
-        async Task RecognizeModelAsync(string engine)
+        var token = session.Cancellation.Token;
+        var speech = settings.FinalSpeech();
+        var waiting = System.Diagnostics.Stopwatch.StartNew();
+        var watch = new System.Diagnostics.Stopwatch();
+        AsrResult result;
+        try
         {
-            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(session.Cancellation.Token);
-            session.RecognitionJobs.Add((entry.Number, engine), cancellation);
-            if (Settings.AutomaticInput && engine != settings.Models.First(m => m.Length > 0))
-            { session.Buffer.ConsumeModel(entry.Number, engine); cancellation.Cancel(); }
-            var token = cancellation.Token;
-            if (!_pools.TryGetValue(engine, out var pool)) _pools.Add(engine, pool = new());
-            var entered = false; var lane = -1; AsrResult? result = null;
-            var watch = new System.Diagnostics.Stopwatch();
-            var waiting = System.Diagnostics.Stopwatch.StartNew();
+            await _recognitionSlots.WaitAsync(token);
             try
             {
-                await pool.Workers.WaitAsync(token); entered = true;
                 waiting.Stop();
-                if (!pool.Lanes.TryDequeue(out lane)) throw new InvalidOperationException("認識ワーカーを取得できません。");
-                token.ThrowIfCancellationRequested(); watch.Start();
-                if (Current(session)) { entry.Status = $"全文認識中 {entry.Results.Length}/{engines.Length}"; entry.Changed(); }
-                var config = settings.Recognition with { CloudTranscription = false, CodexEnabled = false };
+                watch.Start();
+                if (!Current(session)) return;
+                entry.Status = "確定認識中"; entry.Changed();
+                _window?.ShowRecognition($"認識中  {speech.Model}");
                 result = await Task.Run(async () =>
                 {
                     var wave = session.Cache.Read(entry.CachePath);
                     try
                     {
-                        var input = metadata with { Wave = wave };
-                        if (_recognize is not null) return await _recognize(engine, input, config, token);
-                        if (engine == AsrEngines.ExternalTranscription)
-                            return await ExternalSpeechRecognizer.RecognizeAsync(wave, settings.ExternalSpeech, token);
-                        return await _asrs[lane].RecognizeCheckedAsync(engine, input, config, token,
-                            purpose: engine == settings.Models.First(m => m.Length > 0) ? RecognitionPurpose.Full : RecognitionPurpose.Comparison);
+                        if (_recognize is not null) return await _recognize(AsrEngines.ExternalTranscription, metadata with { Wave = wave }, settings.Recognition, token);
+                        return await ExternalSpeechRecognizer.RecognizeAsync(wave, speech, token);
                     }
                     finally { Array.Clear(wave); }
                 }, token);
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-            catch (Exception ex) { result = new(engine, "", watch.Elapsed.TotalSeconds, ex.Message); }
-            finally
+            finally { _recognitionSlots.Release(); }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+        catch (Exception ex) { result = new(AsrEngines.ExternalTranscription, "", watch.Elapsed.TotalSeconds, ex.Message); }
+        if (!Current(session) || token.IsCancellationRequested) return;
+        result = result with { PendingSeconds = result.PendingSeconds + waiting.Elapsed.TotalSeconds };
+        if (result.Succeeded && string.IsNullOrWhiteSpace(result.Text))
+            result = result with { Error = "音声から文字を認識できませんでした。" };
+        entry.Results = [result];
+        entry.Finished = true;
+        entry.Status = result.Succeeded ? "認識完了" : "認識失敗";
+        entry.Changed(); RefreshState();
+        RecordTiming($"録音 #{entry.Number}", speech.Model, result.PendingSeconds + result.QueueSeconds,
+            result.RecognitionSeconds ?? result.ProcessingSeconds, result.Succeeded ? "完了" : result.Error);
+        _window?.ShowRecognition(result.Succeeded ? $"認識完了  {speech.Model}" : $"認識失敗  #{entry.Number}  {speech.Model}  {result.Error}", !result.Succeeded);
+        if (!result.Succeeded) Say("確定認識: " + result.Error);
+        ApplyFinalResults(session);
+        MaybeCloseEmpty(session);
+    }
+
+    private void ApplyFinalResults(VoiceInputSession session)
+    {
+        if (!Current(session) || _busy || _capture is not null || _window?.IsVisible != true) return;
+        if (Settings.AutomaticInput) { TryAutomaticInput(); return; }
+        foreach (var entry in session.Entries.TakeWhile(entry => entry.Finished).Where(entry => !entry.DraftHandled))
+        {
+            if (entry.Results.FirstOrDefault() is { Succeeded: true } result)
             {
-                if (lane >= 0) pool.Lanes.Enqueue(lane); if (entered) pool.Workers.Release();
-                session.RecognitionJobs.Remove((entry.Number, engine));
+                if (!_window.InsertDraft(Settings.CompleteCandidate(result.Text), focus: false)) return;
+                _window.ResetFormattingDiff();
             }
-            if (!Current(session) || token.IsCancellationRequested || result is null) return;
-            result = result with { PendingSeconds = result.PendingSeconds + waiting.Elapsed.TotalSeconds };
-            RecordTiming($"録音 #{entry.Number}", AsrEngines.Get(engine).Name, result.PendingSeconds + result.QueueSeconds,
-                result.RecognitionSeconds ?? result.ProcessingSeconds, result.Succeeded ? "完了" : result.Error);
-            if (result.Succeeded) result = result with { Text = settings.CompleteCandidate(result.Text) };
-            entry.Results = [.. entry.Results, result];
-            entry.Status = $"全文認識中 {entry.Results.Length}/{engines.Length}"; entry.Changed();
-            session.Buffer.Complete(entry.Number, result); RenderResults(session);
-            TryAutomaticInput();
+            entry.DraftHandled = true;
         }
     }
-    private void RenderResults(VoiceInputSession session)
-    {
-        if (!Current(session) || _window is null) return;
-        foreach (var card in _window.PreviewCards) card.ShowAccumulated(session.Buffer.PendingResults(card.EngineId), session.Buffer.Progress(card.EngineId));
-        _window.UpdateSpeeds();
-    }
+
     private void MaybeCloseEmpty(VoiceInputSession session)
     {
         if (TemporarilyPinned || !Current(session) || _capture is not null || session.Entries.Any(e => !e.Finished || !e.LiveFinished)) return;
         if (session.Entries.Any(e => e.LiveText.Length > 0 || e.LiveError.Length > 0 || e.Results.Any(r => r.Text.Length > 0 || r.Error is { Length: > 0 }))) return;
         if (!string.IsNullOrWhiteSpace(_window?.DraftText)) return;
         Dismiss();
-    }
-    public void Append(VoiceInputCard card)
-    {
-        if (_busy || _window is null || !card.CanConfirm || !_window.InsertDraft(VoiceInputSettings.AppendSentence(card.Text))) return;
-        ClearCandidates();
-        Say("完了済み候補だけを消去し、送信予定文字列のカーソル位置へ追記しました。");
-    }
-    public void ClearCandidates()
-    {
-        if (_busy) return;
-        var session = _session;
-        if (session is null) return;
-        session.Buffer.Consume();
-        foreach (var entry in session.Entries.Where(e => e.Finished && e.LiveFinished).ToArray())
-            session.Entries.Remove(entry);
-        RenderResults(session); RefreshState();
     }
     public void Play(VoiceInputLogEntry entry)
     {
@@ -496,6 +458,7 @@ public sealed partial class VoiceInputController
     {
         if (_busy || _capture is not null || _stopping) return;
         var version = ++_targetCaptureVersion;
+        _target = null; _loadedTarget = null; _lastExternal = null;
         SetBusy(true);
         try
         {
@@ -537,12 +500,6 @@ public sealed partial class VoiceInputController
         }
         catch (Exception ex) { if (version == _targetLoadVersion) { Say("現在の入力済文字列を取得できません: " + ex.Message); RefreshState(); } }
         finally { if (version == _targetLoadVersion) { _loadingTarget = false; RefreshState(); TryAutomaticInput(); } }
-    }
-    public void AppendFirstShortcut()
-    {
-        _keyboard?.Reset();
-        if (_capture is not null) ReleaseRecording(false);
-        if (_window?.IsVisible == true) Append(_window.PreviewCards[0]);
     }
     public void SetCapturePanelExpanded(bool expanded)
     {
@@ -615,6 +572,13 @@ public sealed partial class VoiceInputController
         }
     }
     public void Cancel() => Dismiss();
+    internal void HideToTray()
+    {
+        ++_targetCaptureVersion;
+        _automaticTargetPending = false;
+        _window?.Hide();
+        VisibilityChanged();
+    }
     internal void SetSessionLocked(bool locked)
     {
         _sessionLocked = locked;
@@ -634,32 +598,29 @@ public sealed partial class VoiceInputController
         ++_targetCaptureVersion; ++_targetLoadVersion;
         _loadingTarget = false; _automaticTargetPending = false;
         ResetAutomaticInput();
-        _automaticDraftSources.Clear();
         _keyboard?.Reset(); _operation?.Cancel();
         var session = _session; _session = null;
         if (session is not null) { session.Closed = true; session.Cancellation.Cancel(); _retired.Add(session.Cancellation); }
         _window?.Hide(); StopMonitor(); StopPlayback(); ReleaseRecording(false);
-        StopVoiceCaptions();
         if (session is not null)
         {
             try { session.Cache.Dispose(); } catch (Exception ex) { Say("一時音声の削除に失敗しました: " + ex.Message); }
         }
-        _window?.ResetResults(); _window?.BindLog(null); _window?.ShowLive("", false);
+        _window?.BindLog(null); _window?.ShowLive("", false);
         _target = null; _loadedTarget = null; _placedTarget = null;
         if (_lastExternal?.Consumed == true) _lastExternal = null;
         _window?.ResetSession(); RefreshState();
     }
     public async Task StopAsync()
     {
-        _stopping = true; _warmupCancellation?.Cancel(); _targetTimer.Stop(); _meterTimer.Stop(); _keyboard?.Dispose(); Dismiss(); await _work;
+        _stopping = true; _targetTimer.Stop(); _meterTimer.Stop(); _keyboard?.Dispose(); Dismiss(); await _work;
         while (_tasks.Count > 0)
         {
             await Task.WhenAll(_tasks.ToArray());
             // 完了TaskのObserve継続がまだDispatcher待ちでも、同期ループで占有しない。
             await Task.Yield();
         }
-        foreach (var asr in _asrs) asr.Dispose(); _liveAsr.Dispose(); foreach (var cancellation in _retired) cancellation.Dispose();
-        _warmupCancellation?.Dispose();
-        foreach (var pool in _pools.Values) pool.Workers.Dispose(); _window?.CloseForExit();
+        foreach (var cancellation in _retired) cancellation.Dispose();
+        _recognitionSlots.Dispose(); _window?.CloseForExit();
     }
 }

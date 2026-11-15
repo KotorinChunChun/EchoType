@@ -31,7 +31,7 @@ public partial class App : Application
             var options = Parse(e.Args);
             if (isolated && !options.ContainsKey("--data-root"))
                 throw new ArgumentException("画面試験には --data-root が必要です。");
-            if (migrate && (isolated || background || options.ContainsKey("--open") || options.ContainsKey("--model-root") || options.ContainsKey("--launch-origin")))
+            if (migrate && (isolated || background || options.ContainsKey("--open") || options.ContainsKey("--launch-origin")))
                 throw new ArgumentException("移行は単独で実行してください。");
             var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.GetValueOrDefault("--data-root") ?? AgentPaths.DefaultRoot));
             if (isolated && string.Equals(root, AgentPaths.DefaultRoot, StringComparison.OrdinalIgnoreCase))
@@ -49,7 +49,7 @@ public partial class App : Application
                 return;
             }
 
-            var paths = new AgentPaths(root, options.GetValueOrDefault("--model-root"));
+            var paths = new AgentPaths(root);
             _store = new SecureStore(paths);
             if (migrate)
             {
@@ -58,24 +58,15 @@ public partial class App : Application
                 return;
             }
 
-            using (var runtime = SharedRecognitionRuntime.Acquire(paths))
-            {
-                var shared = _store.LoadSettings();
-                var recognition = _store.LoadVoiceInputSettings().Recognition;
-                runtime.ConfigureEngineSettings(shared, recognition);
-                _voice = new(paths, _store, Dispatcher, noAudio: isolated, monitor: !isolated);
-                EngineSettingsJournal.Change(paths, "startup", recognition, recognition with { Performance = shared.Performance },
-                    runtime.EffectiveSettings(recognition, voice: true), voice: true);
-            }
+            _voice = new(paths, _store, Dispatcher, noAudio: isolated, monitor: !isolated);
             if (smoke)
             {
                 await RunUiSmokeAsync(_voice, paths);
                 await ExitAsync();
                 return;
             }
-            CreateTray(paths, isolated);
+            CreateTray();
             SystemEvents.SessionSwitch += SessionSwitch;
-            _voice.StartWhisperWarmup();
             _management = new(Dispatcher, root, options.GetValueOrDefault("--launch-origin") ?? "standalone",
                 _voice.Open, () => _ = ExitAsync(), _voice.ManagementStopBlockReason);
             if (!background) _voice.Open();
@@ -103,7 +94,7 @@ public partial class App : Application
             var value = name switch
             {
                 "--open" or "--startup" or "--migrate-desktop-agent" or "--smoke-ui" or "--smoke-management" => null,
-                "--data-root" or "--source-root" or "--model-root" when i + 1 < args.Length && !args[i + 1].StartsWith("--") => args[++i],
+                "--data-root" or "--source-root" when i + 1 < args.Length && !args[i + 1].StartsWith("--") => args[++i],
                 "--launch-origin" when i + 1 < args.Length && args[i + 1] is "host_manual" or "direct_task" or "via_kotorintoys" => args[++i],
                 _ => throw new ArgumentException("起動オプションを確認してください。")
             };
@@ -114,14 +105,12 @@ public partial class App : Application
         return options;
     }
 
-    private void CreateTray(AgentPaths paths, bool isolated)
+    private void CreateTray()
     {
         _icon = AppIcon.CreateTrayIcon();
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("音声入力", null, (_, _) => _voice!.Open());
         menu.Items.Add("設定", null, (_, _) => _voice!.OpenSettings());
-        if (!isolated)
-            menu.Items.Add("音声認識モデル", null, (_, _) => InitialWhisperSetup.Show(paths, _voice!.Settings, _voice.StartWhisperWarmup));
         var pause = new Forms.ToolStripMenuItem("一時停止");
         pause.Click += (_, _) =>
         {
@@ -142,7 +131,7 @@ public partial class App : Application
         var window = Windows.OfType<VoiceInputWindow>().Single();
         if (!window.IsVisible || window.FindName("TargetButton") is not Button { ActualWidth: > 0, ActualHeight: > 0 })
             throw new InvalidOperationException("音声入力ウィンドウを表示できません。");
-        var settings = new VoiceInputSettingsWindow(voice, voice.Settings.Models) { Owner = window, ShowActivated = false };
+        var settings = new VoiceInputSettingsWindow(voice) { Owner = window, ShowActivated = false };
         settings.Show();
         settings.UpdateLayout();
         if (!settings.IsVisible || settings.Content is not FrameworkElement { ActualHeight: > 0 })
@@ -160,32 +149,28 @@ public partial class App : Application
         voice.SetPaused(false);
         voice.Open();
         if (voice.IsPaused || !window.IsVisible) throw new InvalidOperationException("再開後に音声入力ウィンドウを表示できません。");
-        if (Windows.OfType<InitialWhisperSetup>().Any(setup => setup.IsVisible))
-            throw new InvalidOperationException("起動時に任意のモデル準備画面が表示されました。");
-        InitialWhisperSetup.Show(paths, voice.Settings with { Models = ["windows", "whisper-base"] }, voice.StartWhisperWarmup);
-        if (!Windows.OfType<InitialWhisperSetup>().Any(setup => setup.IsVisible))
-            throw new InvalidOperationException("不足しているモデルの準備画面を表示できません。");
-        await InitialWhisperSetup.CloseAsync();
-        if (Windows.OfType<InitialWhisperSetup>().Any(setup => setup.IsVisible))
-            throw new InvalidOperationException("モデル準備画面を閉じられません。");
-        var localSettings = voice.Settings;
-        voice.SaveSettings(localSettings with { ExternalSpeech = new()
+        var live = (FrameworkElement)window.FindName("LiveGroup");
+        if (live.Visibility != Visibility.Collapsed || window.FindName("Cards") is not null)
+            throw new InvalidOperationException("初期状態の確定欄と即時表示を確認できません。");
+        var speech = new EchoType.Core.ExternalSpeechSettings
         {
             Mode = EchoType.Core.ExternalSpeechMode.Server,
             Endpoint = "https://speech.example.test/v1/audio/transcriptions",
-            Model = "fixture-model"
-        } });
-        window.ShowProfileSettings(voice.Settings);
-        if (window.PreviewCards[0].EngineId != EchoType.Core.AsrEngines.ExternalTranscription || window.PreviewCards[0].Editable ||
-            window.PreviewCards.Skip(1).Any(card => card.EngineId.Length > 0))
-            throw new InvalidOperationException("外部認識の候補欄を表示できません。");
-        voice.SaveSettings(localSettings);
-        window.ShowProfileSettings(voice.Settings);
-        if (!window.PreviewCards.Select(card => card.EngineId).Take(localSettings.Models.Length).SequenceEqual(localSettings.Models))
-            throw new InvalidOperationException("このPCの認識へ戻した際にモデル選択が復元されません。");
-        voice.Dismiss();
-        if (window.IsVisible) throw new InvalidOperationException("音声入力ウィンドウを閉じられません。");
-        Console.WriteLine("音声入力と設定、ロックと一時停止、任意のモデル準備、認識先の切り替えを確認しました。");
+            Model = "fixture-final"
+        };
+        voice.SaveSettings(voice.Settings with { ExternalSpeech = speech, LiveDisplayEnabled = true, LiveSpeech = speech with { Model = "fixture-live" } });
+        if (live.Visibility != Visibility.Visible || !((TextBlock)window.FindName("LiveLabel")).Text.Contains("fixture-live") ||
+            !((TextBlock)window.FindName("RecognitionText")).Text.Contains("fixture-final"))
+            throw new InvalidOperationException("即時表示と確定のモデルが別々に表示されません。");
+        window.Close();
+        if (window.IsVisible) throw new InvalidOperationException("閉じる操作で格納できません。");
+        voice.Open();
+        window.WindowState = WindowState.Minimized;
+        if (window.IsVisible) throw new InvalidOperationException("最小化で格納できません。");
+        voice.Open();
+        if (!window.IsVisible || window.WindowState == WindowState.Minimized)
+            throw new InvalidOperationException("格納したウィンドウを再表示できません。");
+        Console.WriteLine("設定、即時表示の切替、独立したモデル名、一時停止、閉じる・最小化・再表示を確認しました。");
     }
 
     private async Task ExitAsync(int code = 0)
@@ -195,7 +180,6 @@ public partial class App : Application
         SystemEvents.SessionSwitch -= SessionSwitch;
         try
         {
-            await InitialWhisperSetup.CloseAsync();
             if (_voice is not null) await _voice.StopAsync();
         }
         catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name); code = 1; }

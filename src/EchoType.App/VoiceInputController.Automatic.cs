@@ -5,7 +5,6 @@ namespace EchoType.App;
 public sealed partial class VoiceInputController
 {
     private readonly List<(VoiceInputLogEntry Entry, string Engine)> _automaticEntries = [];
-    private readonly HashSet<VoiceInputLogEntry> _automaticDraftSources = [];
     private VoiceInputSession? _automaticSession;
     private CancellationTokenSource? _automaticCancellation;
     private bool _automaticProcessing, _automaticSending, _automaticFaulted, _automaticTargetPending, _automaticDraftRequested;
@@ -24,7 +23,6 @@ public sealed partial class VoiceInputController
     {
         var settings = Settings with { AutomaticInput = enabled };
         PersistSettings(settings);
-        if (enabled) StopSecondaryRecognition();
         RestartAutomaticInput(enabled ? "自動採用をオンにしました。" : "自動採用をオフにしました。");
     }
     public void SetAutomaticOptions(bool formatting, bool confirm)
@@ -42,15 +40,11 @@ public sealed partial class VoiceInputController
         {
             _automaticSession = session;
             _automaticDraftRequested = !string.IsNullOrWhiteSpace(_window.DraftText);
-            var engine = _window.PreviewCards.FirstOrDefault(c => c.EngineId.Length > 0)?.EngineId;
-            if (engine is not null)
-                foreach (var entry in session.Entries.OrderBy(entry => entry.RecordingNumber).Where(entry =>
-                    !_automaticDraftSources.Contains(entry) &&
-                    (session.Buffer.IsPending(entry.Number, engine) ||
-                     _recording is { } recording && ReferenceEquals(recording.Entry, entry) && recording.Settings.CandidateModels().Contains(engine))))
-                    _automaticEntries.Add((entry, engine));
+            foreach (var entry in session.Entries.Where(entry => !entry.DraftHandled))
+                _automaticEntries.Add((entry, AsrEngines.ExternalTranscription));
         }
-        RefreshState(); TryAutomaticInput();
+        RefreshState();
+        if (_session is { } current) ApplyFinalResults(current);
     }
     private void ResetAutomaticInput()
     {
@@ -72,7 +66,7 @@ public sealed partial class VoiceInputController
             _automaticEntries.Clear(); _automaticSession = recording.Session;
         }
         _automaticFaulted = false;
-        _automaticEntries.Add((recording.Entry, recording.Settings.RecognitionModels()[0]));
+        _automaticEntries.Add((recording.Entry, AsrEngines.ExternalTranscription));
     }
     private void TryAutomaticInput()
     {
@@ -82,19 +76,17 @@ public sealed partial class VoiceInputController
 
         // 録音順の先頭から準備できた分を先に本文へ置く。整形の完了を表示条件にしない。
         var ready = _automaticEntries.TakeWhile(item => item.Entry.Results.Any(r => r.EngineId == item.Engine && r.Succeeded)).ToArray();
-        if (ready.Length > 0)
+        if (ready.Length > 0 && _capture is null)
         {
             var candidate = string.Concat(ready.Select(item => item.Entry.Results.First(r => r.EngineId == item.Engine).Text.Trim()));
             if (!string.IsNullOrWhiteSpace(candidate))
             {
-                if (!_window.InsertDraft(VoiceInputSettings.AppendSentence(candidate))) { _automaticFaulted = true; RefreshState(); return; }
+                if (!_window.InsertDraft(VoiceInputSettings.AppendSentence(candidate), focus: false)) { _automaticFaulted = true; RefreshState(); return; }
                 _automaticDraftRequested = true;
                 _window.ResetFormattingDiff();
                 _automaticCancellation?.Cancel();
             }
-            foreach (var item in ready) { _automaticEntries.Remove(item); _automaticDraftSources.Add(item.Entry); }
-            session.Buffer.ConsumeRecordings(ready.Select(item => item.Entry.Number));
-            RenderResults(session);
+            foreach (var item in ready) { _automaticEntries.Remove(item); item.Entry.DraftHandled = true; }
         }
         if (_automaticEntries.FirstOrDefault().Entry is { } first && first.Results.Any(r => r.EngineId == _automaticEntries[0].Engine && !r.Succeeded))
         {
@@ -148,19 +140,17 @@ public sealed partial class VoiceInputController
                 _automaticDraftRequested = false;
                 if (!confirm)
                 {
-                    RenderResults(session);
                     Say("決定で入力できます。");
                     return;
                 }
                 _window.DraftText = "";
-                _automaticDraftSources.Clear();
                 if (_capture is not null || _automaticEntries.Count > 0)
                 {
                     // 入力確定直後の追加録音も保持し、確定後の本文・位置を次の入力先にする。
                     var next = await Task.Run(target!.RefreshSnapshot);
                     _target = next; _loadedTarget = settings.ReplaceTargetText ? next : null;
                     if (settings.ReplaceTargetText) _window.LoadTargetText(next);
-                    _window.ShowTarget(next); RenderResults(session); return;
+                    _window.ShowTarget(next); return;
                 }
                 _target = null; _loadedTarget = null; _window.ShowTarget(null);
                 Dismiss();

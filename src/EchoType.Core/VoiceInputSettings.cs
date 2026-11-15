@@ -27,6 +27,10 @@ public sealed record VoiceInputSettings
     public int MaximumSeconds { get; init; } = 60;
     public string LiveEngine { get; init; } = "windows";
     public ExternalSpeechSettings ExternalSpeech { get; init; } = new();
+    public bool LiveDisplayEnabled { get; init; }
+    public ExternalSpeechSettings LiveSpeech { get; init; } = new();
+    public ExternalSpeechSettings FinalSpeech() => ExternalSpeech.Enabled ? ExternalSpeech : ExternalSpeechSettings.SpeechCppDefault;
+    public ExternalSpeechSettings PreviewSpeech() => LiveSpeech.Enabled ? LiveSpeech : ExternalSpeechSettings.SpeechCppDefault;
     public string FormattingModel { get; init; } = "gpt-6-luna";
     [System.Text.Json.Serialization.JsonIgnore]
     public string PersonalCorrections { get; init; } = "[]";
@@ -55,7 +59,10 @@ public sealed record VoiceInputSettings
     {
         Models = Models.Select(AsrEngines.MigrateSelection).ToArray(),
         LiveEngine = AsrEngines.MigrateSelection(LiveEngine),
-        Recognition = AsrEngines.MigrateSelections(Recognition)
+        Recognition = AsrEngines.MigrateSelections(Recognition with
+        {
+            DeviceNumber = Recognition.DeviceNumber == 0 && Recognition.DeviceName.Length == 0 ? -1 : Recognition.DeviceNumber
+        })
     };
     public string[] Models { get; init; } = ["windows", "", "", "", "", "", "", ""];
     public string[] CandidateModels() => ExternalSpeech.Enabled ? [AsrEngines.ExternalTranscription] : Models;
@@ -66,7 +73,7 @@ public sealed record VoiceInputSettings
         .Where(id => id.StartsWith("whisper-", StringComparison.Ordinal) || id == "kotoba-v2").Distinct().ToArray();
     public AppSettings Recognition { get; init; } = new()
     {
-        WakeWord = "", AsrVocabulary = "", ScreenVocabularyEnabled = false,
+        DeviceNumber = -1, WakeWord = "", AsrVocabulary = "", ScreenVocabularyEnabled = false,
         SkillVocabularyEnabled = false, PlaybackDenoiseEnabled = false, AsrLengthCheckEnabled = false
     };
     public void Validate()
@@ -79,9 +86,8 @@ public sealed record VoiceInputSettings
         if (TargetGap is < 0 or > 200) throw new InvalidOperationException("入力欄との間隔は0〜200で指定してください。");
         if (MaximumSeconds is < 2 or > 300) throw new InvalidOperationException("最大録音時間は2〜300秒です。");
         if (ExternalSpeech.Enabled) ExternalSpeech.ValidateEndpoint();
+        if (LiveDisplayEnabled) PreviewSpeech().ValidateEndpoint();
         if (!LiveEngines.Any(e => e.Id == LiveEngine)) throw new InvalidOperationException("途中認識モデルを確認してください。");
-        if (AutomaticInput && RecognitionModels().FirstOrDefault() == AsrEngines.WindowsCaptions)
-            throw new InvalidOperationException("Windowsライブキャプションは音源一致を保証できないため、自動入力をオフにして手動で採用してください。");
         if (Models is null || Models.Length is < 1 or > 8 || !Models.Any(m => !string.IsNullOrEmpty(m)) ||
             Models.Any(m => m is null || m.Length > 0 && !LocalEngines.Any(e => e.Id == m)))
             throw new InvalidOperationException("1〜8枠に認識モデルを選択してください。");

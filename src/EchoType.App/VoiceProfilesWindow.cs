@@ -18,8 +18,7 @@ internal sealed class VoiceProfilesWindow : Window
         {
             var settings = existing?.Settings ?? controller.Settings;
             EntryDialog? dialog = null; TextBox? name = null, path = null, prompt = null, simple = null, vocabulary = null;
-            ComboBox? format = null, effort = null, live = null; CheckBox? automatic = null, autoFormat = null, autoConfirm = null;
-            var models = new List<ComboBox>();
+            ComboBox? format = null, effort = null; CheckBox? automatic = null, autoFormat = null, autoConfirm = null;
             dialog = new(this, "アプリ設定", () =>
             {
                 var value = new VoiceApplicationProfile(path!.Text.Trim(), name!.Text.Trim(), settings with
@@ -27,7 +26,6 @@ internal sealed class VoiceProfilesWindow : Window
                     AutomaticInput = automatic!.IsChecked == true, AutomaticFormatting = autoFormat!.IsChecked == true,
                     AutomaticConfirm = autoConfirm!.IsChecked == true, FormattingPrompt = prompt!.Text, SimpleFormattingPrompt = simple!.Text,
                     FormattingModel = (string)format!.SelectedItem, FormattingEffort = (string)effort!.SelectedItem,
-                    LiveEngine = (string)live!.SelectedItem, Models = models.Select(m => (string)m.SelectedItem == "未割り当て" ? "" : (string)m.SelectedItem).ToArray(),
                     Recognition = settings.Recognition with { AsrVocabulary = vocabulary!.Text }
                 });
                 store.SaveVoiceProfile(value);
@@ -36,8 +34,6 @@ internal sealed class VoiceProfilesWindow : Window
             name = dialog.Text("名前", existing?.Name ?? Path.GetFileNameWithoutExtension(controller.TargetApplicationPath));
             path = dialog.Text("実行ファイル", existing?.ApplicationPath ?? controller.TargetApplicationPath, 1000);
             automatic = dialog.Check("自動入力", settings.AutomaticInput); autoFormat = dialog.Check("自動整形", settings.AutomaticFormatting); autoConfirm = dialog.Check("自動決定", settings.AutomaticConfirm);
-            live = dialog.Choice("途中認識", VoiceInputSettings.LiveEngines.Select(e => e.Id), settings.LiveEngine);
-            for (var i = 0; i < 8; i++) models.Add(dialog.Choice($"モデル {i + 1}", VoiceInputSettings.LocalEngines.Select(e => e.Id).Append("未割り当て"), settings.Models.ElementAtOrDefault(i) is { Length: > 0 } id ? id : "未割り当て"));
             format = dialog.Choice("整形モデル", VoiceInputSettings.FormattingModels, settings.FormattingModel);
             effort = dialog.Choice("エフォート", VoiceInputSettings.FormattingEfforts, settings.FormattingEffort);
             prompt = dialog.Text("整形方針", settings.FormattingPrompt, 8000, true); simple = dialog.Text("単純整形", settings.SimpleFormattingPrompt, 8000, true);

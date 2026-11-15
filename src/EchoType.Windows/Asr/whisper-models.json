@@ -1,7 +1,0 @@
-{
-  "whisper-base": ["Systran/faster-whisper-base", "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"],
-  "whisper-small": ["Systran/faster-whisper-small", "536b0662742c02347bc0e980a01041f333bce120"],
-  "whisper-turbo": ["mobiuslabsgmbh/faster-whisper-large-v3-turbo", "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"],
-  "kotoba-v2": ["kotoba-tech/kotoba-whisper-v2.0-faster", "f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc"],
-  "whisper-large-v3": ["Systran/faster-whisper-large-v3", "edaa852ec7e145841d8ffdb056a99866b5f0a478"]
-}

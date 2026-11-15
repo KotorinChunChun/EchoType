@@ -1,6 +1,5 @@
 using EchoType.Core;
 using EchoType.Windows;
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -13,9 +12,8 @@ public partial class VoiceInputWindow : Window
     private VoiceInputSettingsWindow? _settingsWindow;
     public bool SettingsOpen => _settingsWindow?.IsVisible == true;
     public void CloseSettings() => _settingsWindow?.Close();
-    public VoiceInputCard[] PreviewCards { get; }
     private bool _closing, _picking;
-    private bool _initializing = true, _refreshingDevices, _refreshingAutomatic, _automaticLayout;
+    private bool _initializing = true, _refreshingDevices, _refreshingAutomatic;
     private readonly VoiceTargetOutline _outline = new();
     private VoiceInputTarget? _highlightTarget;
     private AudioMeter _displayMeter = new(0, 0, []);
@@ -29,28 +27,26 @@ public partial class VoiceInputWindow : Window
         ShowAutomaticSettings(settings);
         ReadCurrentText.IsChecked = settings.ReplaceTargetText;
         CaretPosition.Text = settings.ReplaceTargetText ? "置換予定文字列" : "送信予定文字列";
-        var models = settings.CandidateModels();
-        PreviewCards = Enumerable.Range(0, 8).Select(i => new VoiceInputCard(models.ElementAtOrDefault(i) ?? "", controller.ModelSpeedOrder, settings.ExternalSpeech.Enabled)).ToArray();
-        foreach (var card in PreviewCards) card.EngineChanged += () =>
-        {
-            if (_initializing) return;
-            try { controller.SaveSettings(controller.Settings with { Models = PreviewCards.Select(c => c.EngineId).ToArray() }); }
-            catch (Exception ex) { ShowProfileSettings(controller.Settings); SetStatus(ex.Message); }
-        };
-        Cards.ItemsSource = PreviewCards;
+        ShowRecognitionConfiguration(settings);
         FormattingModel.ItemsSource = VoiceInputSettings.FormattingModels; FormattingModel.SelectedItem = settings.FormattingModel;
         FormattingEffort.ItemsSource = VoiceInputSettings.FormattingEfforts; FormattingEffort.SelectedItem = settings.FormattingEffort;
         RefreshDevices(settings.Recognition);
         _initializing = false;
         ShowMeter(null);
-        Closing += (_, e) => { if (!_closing) { e.Cancel = true; _controller.Dismiss(); } };
+        Closing += (_, e) => { if (!_closing) { e.Cancel = true; _controller.HideToTray(); } };
+        SourceInitialized += (_, _) => RemoveMinimizeButton(this);
+        StateChanged += (_, _) =>
+        {
+            if (_closing || WindowState != WindowState.Minimized) return;
+            _controller.HideToTray();
+            WindowState = WindowState.Normal;
+        };
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { e.Handled = true; _controller.Dismiss(); } };
         PreviewKeyDown += async (_, e) =>
         {
             if (e.Key != Key.Enter || e.IsRepeat || (Keyboard.Modifiers & ModifierKeys.Control) == 0 || (Keyboard.Modifiers & ModifierKeys.Alt) != 0) return;
             e.Handled = true;
-            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0) _controller.AppendFirstShortcut();
-            else if (ConfirmButton.IsEnabled) await _controller.ConfirmAsync();
+            if (ConfirmButton.IsEnabled) await _controller.ConfirmAsync();
         };
         Loaded += (_, _) => UpdateCaret(); Editor.SizeChanged += (_, _) => { UpdateCaret(); QueueDiff(); };
         BeforeText.SizeChanged += (_, _) => QueueDiff();
@@ -125,35 +121,49 @@ public partial class VoiceInputWindow : Window
         SettingsButton.IsEnabled = !exclusive && !recording && pending == 0;
         Editor.IsReadOnly = exclusive; FormattingModel.IsEnabled = FormattingEffort.IsEnabled = !exclusive;
         TargetButton.IsEnabled = !exclusive && !recording; DevicePanel.IsEnabled = !exclusive && !recording;
-        foreach (var card in PreviewCards) { card.SetBusy(exclusive); card.SetSelectionLocked(exclusive || recording || pending > 0); }
         UpdateConfirm();
     }
     public void BindLog(System.Collections.IEnumerable? entries) { if (!ReferenceEquals(QueueLog.ItemsSource, entries)) QueueLog.ItemsSource = entries; }
     public void ShowLive(string text, bool final)
     {
-        var engine = AsrEngines.Get(_controller.Settings.LiveEngine).Name;
-        LiveLabel.Text = final ? $"{engine} 確定（この回の長押し音声）" : _controller.Settings.LiveEngine == AsrEngines.WindowsCaptions ? engine : "Windows 速報（認識できた文字から即時更新）";
         LiveText.Text = text;
+        if (text.Length > 0) LiveLabel.Text = "即時表示  " + _controller.Settings.PreviewSpeech().Model;
     }
-    public void ResetResults()
+    public void ShowLiveError(string message) => LiveLabel.Text = $"即時表示  {_controller.Settings.PreviewSpeech().Model}  {message}";
+    public void ResetLive()
     {
-        foreach (var card in PreviewCards) card.Show(null);
+        LiveText.Clear();
+        LiveLabel.Text = "即時表示  " + _controller.Settings.PreviewSpeech().Model;
+    }
+    public void ShowRecognition(string message, bool error = false)
+    {
+        RecognitionText.Text = message;
+        RecognitionText.Foreground = error ? Brushes.Firebrick : Brushes.DarkSlateGray;
+    }
+    private void ShowRecognitionConfiguration(VoiceInputSettings settings)
+    {
+        LiveGroup.Visibility = settings.LiveDisplayEnabled ? Visibility.Visible : Visibility.Collapsed;
+        ResetLive();
+        var model = settings.FinalSpeech().Model;
+        ShowRecognition(model.Length == 0 ? "設定で確定モデルを指定してください。" : $"確定モデル  {model}", model.Length == 0);
     }
     public void ResetSession()
     {
         ResetFormattingDiff(); DraftText = ""; ShowTarget(null);
+        ShowRecognitionConfiguration(_controller.Settings);
         ComparisonViewport.ScrollToTop(); OuterViewport.ScrollToTop();
     }
-    public void Result(AsrResult result)
+    internal static void RemoveMinimizeButton(Window window)
     {
-        foreach (var card in PreviewCards.Where(c => c.EngineId == result.EngineId)) card.Show(result);
-        UpdateSpeeds();
+        var handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        const int style = -16, minimizeBox = 0x00020000;
+        var current = GetWindowLong(handle, style);
+        if ((current & minimizeBox) == 0) return;
+        SetWindowLong(handle, style, current & ~minimizeBox);
+        SetWindowPos(handle, 0, 0, 0, 0, 0, 0x0037);
     }
-    public void UpdateSpeeds()
-    {
-        var max = PreviewCards.Max(c => c.Seconds);
-        foreach (var card in PreviewCards) card.SetSpeed(max);
-    }
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(nint window, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")] private static extern int SetWindowLong(nint window, int index, int value);
     public void CloseForExit() { _closing = true; Close(); }
     private bool _busy, _recording;
     public string DraftText { get => Editor.Text; set { Editor.Text = value; Editor.CaretIndex = Editor.Text.Length; } }
@@ -181,24 +191,18 @@ public partial class VoiceInputWindow : Window
         if (rect.IsEmpty) return;
         Canvas.SetLeft(CaretMarker, rect.X); Canvas.SetTop(CaretMarker, rect.Y); CaretMarker.Height = Math.Max(18, rect.Height);
     }
-    public void Append(VoiceInputCard card) => _controller.Append(card);
-    public bool InsertDraft(string text)
+    public bool InsertDraft(string text, bool focus = true)
     {
         var caret = Editor.CaretIndex;
         if (Editor.Text.Length + text.Length > Editor.MaxLength) { SetStatus("編集欄は16000文字までです。"); return false; }
         Editor.Text = Editor.Text.Insert(caret, text);
-        Editor.CaretIndex = caret + text.Length; Editor.Focus(); UpdateCaret(); return true;
+        Editor.CaretIndex = caret + text.Length; if (focus) Editor.Focus(); UpdateCaret(); return true;
     }
     private void Play_Click(object sender, RoutedEventArgs e) { if (sender is Button { Tag: VoiceInputLogEntry entry }) _controller.Play(entry); }
     private void StopPlayback_Click(object sender, RoutedEventArgs e) => _controller.StopPlayback();
-    private void Append_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: VoiceInputCard card }) Append(card);
-    }
-    private void Delete_Click(object sender, RoutedEventArgs e) { _controller.ClearCandidates(); SetStatus("完了済みの候補だけを消去しました。処理中・録音中の音声は継続します。"); }
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
-        _settingsWindow = new VoiceInputSettingsWindow(_controller, _controller.Settings.Models) { Owner = this };
+        _settingsWindow = new VoiceInputSettingsWindow(_controller) { Owner = this };
         try { if (_settingsWindow.ShowDialog() == true) ShowProfileSettings(_controller.Settings); }
         finally { _settingsWindow = null; }
     }
@@ -206,9 +210,7 @@ public partial class VoiceInputWindow : Window
     {
         var initializing = _initializing; _initializing = true;
         try {
-        var models = settings.CandidateModels();
-        for (var i = 0; i < PreviewCards.Length; i++)
-            PreviewCards[i].SetModel(models.ElementAtOrDefault(i) ?? "", settings.ExternalSpeech.Enabled);
+        ShowRecognitionConfiguration(settings);
         FormattingModel.SelectedItem = settings.FormattingModel; FormattingEffort.SelectedItem = settings.FormattingEffort;
         ShowAutomaticSettings(settings);
         } finally { _initializing = initializing; }
@@ -298,12 +300,6 @@ public partial class VoiceInputWindow : Window
             AutomaticConfirmToggle.IsChecked = settings.AutomaticConfirm && !_controller.TemporarilyPinned;
             AutomaticFormattingToggle.IsEnabled = settings.AutomaticInput;
             AutomaticConfirmToggle.IsEnabled = settings.AutomaticInput && !_controller.TemporarilyPinned;
-            _automaticLayout = settings.AutomaticInput;
-            Cards.Visibility = CandidateHeading.Visibility = _automaticLayout ? Visibility.Collapsed : Visibility.Visible;
-            LiveGroup.Visibility = _automaticLayout ? Visibility.Collapsed : Visibility.Visible;
-            CapturePanel.Header = _automaticLayout ? "録音デバイス・波形" : "録音デバイス・波形・リアルタイム文字起こし";
-            ComparisonRow.Height = _automaticLayout ? GridLength.Auto : new(1, GridUnitType.Star);
-            DraftRow.Height = _automaticLayout ? new(1, GridUnitType.Star) : GridLength.Auto;
             UpdateDraftLayout();
         }
         finally { _refreshingAutomatic = false; }
@@ -311,17 +307,12 @@ public partial class VoiceInputWindow : Window
     private void UpdateDraftLayout()
     {
         var minimum = HasFormattingDiff ? 185 : 145;
-        DraftGrid.MinHeight = _automaticLayout ? minimum : 0;
-        DraftGrid.Height = _automaticLayout ? double.NaN : minimum;
+        DraftGrid.MinHeight = minimum;
+        DraftGrid.Height = double.NaN;
         UpdateMinimumLayoutHeight();
     }
     private void UpdateMinimumLayoutHeight()
     {
-        if (!_automaticLayout)
-        {
-            MainLayout.MinHeight = Math.Max(550, TargetGroup.ActualHeight + CapturePanel.ActualHeight + DraftGroup.ActualHeight + 160);
-            return;
-        }
         // Starで広がった編集欄の実高さを加算すると、最小高さが連続して増えるため必要寸法だけを使う。
         static double OuterHeight(FrameworkElement element) => element.ActualHeight + element.Margin.Top + element.Margin.Bottom;
         var minimum = OuterHeight(TargetGroup) + OuterHeight(CapturePanel) + OuterHeight(ComparisonViewport) +
@@ -359,53 +350,4 @@ public partial class VoiceInputWindow : Window
     private void Target_LostCapture(object sender, MouseEventArgs e) { _picking = false; Mouse.OverrideCursor = null; }
     [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X, Y; }
     [DllImport("user32.dll")] private static extern bool GetPhysicalCursorPos(out NativePoint point);
-}
-
-public sealed class VoiceInputCard(string engine, string[]? speedOrder = null, bool external = false) : INotifyPropertyChanged
-{
-    public event Action? EngineChanged;
-    public event PropertyChangedEventHandler? PropertyChanged;
-    public AsrEngine[] Engines => _external ? [AsrEngines.Get(AsrEngines.ExternalTranscription), new("", "未割り当て")] :
-        [.. VoiceInputSettings.LocalEngines.OrderBy(e => Array.IndexOf(speedOrder ?? VoiceModelSpeed.Fallback, e.Id)), new("", "未割り当て")];
-    private string _engine = engine, _text = "";
-    private bool _busy, _succeeded, _selectionLocked, _external = external;
-    public string EngineId { get => _engine; set { if (_engine == value || value is null) return; _engine = value; Show(null); EngineChanged?.Invoke(); } }
-    public string Text { get => _text; set { _text = value; Notify(); } }
-    public string Summary { get; private set; } = "録音待ち";
-    public double Seconds { get; private set; }
-    public double SpeedPercent { get; private set; }
-    public bool Editable => !_busy && !_selectionLocked && !_external;
-    public void SetModel(string engineId, bool useExternal)
-    {
-        var changed = _external != useExternal;
-        _external = useExternal;
-        EngineId = engineId;
-        if (changed) Notify();
-    }
-    public bool ReadOnly => true;
-    public bool CanConfirm => !_busy && _succeeded && !string.IsNullOrWhiteSpace(Text);
-    public bool CanClear => !_busy;
-    public void SetBusy(bool busy) { _busy = busy; Notify(); }
-    public void SetSelectionLocked(bool locked) { _selectionLocked = locked; Notify(); }
-    public bool IsProcessing { get; private set; }
-    public double CompletionPercent { get; private set; }
-    public void ShowAccumulated(AsrResult[] results, VoiceInputProgress progress)
-    {
-        _text = string.Concat(results.Where(r => r.Succeeded).Select(r => r.Text.Trim()));
-        _succeeded = _text.Length > 0; Seconds = progress.Seconds;
-        IsProcessing = EngineId.Length > 0 && progress.Completed < progress.Total;
-        CompletionPercent = progress.Total == 0 ? 0 : 100d * progress.Completed / progress.Total;
-        Summary = EngineId.Length == 0 ? "未割り当て" : $"{progress.Total}件中 {progress.Completed}件完了 / 累計 {Seconds:F2}秒" + (progress.Failed > 0 ? $" / 失敗 {progress.Failed}件（ログ参照）" : "");
-        Notify();
-    }
-    public void Show(AsrResult? result)
-    {
-        _text = result?.Text ?? ""; _succeeded = result?.Succeeded == true && _text.Length > 0;
-        Seconds = result?.ProcessingSeconds ?? 0;
-        Summary = result is null ? EngineId.Length == 0 ? "未割り当て" : "録音待ち" : $"{result.Status} / {result.ProcessingSeconds:F2}秒";
-        IsProcessing = false; SpeedPercent = 0; CompletionPercent = result is null ? 0 : 100; Notify();
-    }
-    public void SetSpeed(double max) { SpeedPercent = max > 0 ? Seconds / max * 100 : 0; Notify(); }
-    public void Consume() { _succeeded = false; Notify(); }
-    private void Notify() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(""));
 }

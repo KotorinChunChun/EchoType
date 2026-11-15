@@ -14,18 +14,14 @@ public sealed partial class VoiceInputController
     public string TargetApplicationPath => _target?.ApplicationPath ?? _lastExternal?.ApplicationPath ?? _application;
     public string ProfileName => _profile?.Name ?? "共通設定";
     internal SecureStore PersonalizationStore => _store;
-    private VoiceInputSettings Effective(VoiceInputSettings settings)
-    {
-        var enriched = VoicePersonalization.Enrich(settings, _store.LoadSettings(), _words, _application);
-        return enriched with { Recognition = _liveAsr.EffectiveSettings(enriched.Recognition) };
-    }
-    public string EngineRestartNotice => _liveAsr.Runtime.VoiceEngineSettings?.Notice(Settings.Recognition with { Performance = _store.LoadSettings().Performance }) ?? "";
+    private VoiceInputSettings Effective(VoiceInputSettings settings) =>
+        VoicePersonalization.Enrich(settings, _store.LoadSettings(), _words, _application);
     private void PersistSettings(VoiceInputSettings settings)
     {
         settings.Validate();
         if (_profile is not null)
         {
-            _profile = _profile with { Settings = settings with { PersonalCorrections = "[]", ExternalSpeech = new() } };
+            _profile = _profile with { Settings = settings with { PersonalCorrections = "[]", ExternalSpeech = new(), LiveSpeech = new() } };
             _store.SaveVoiceProfile(_profile);
             _profiles = _profiles.Where(p => !string.Equals(p.ApplicationPath, _profile.ApplicationPath, StringComparison.OrdinalIgnoreCase)).Append(_profile).ToArray();
             _commonSettings = new VoiceApplicationProfile("", "", _commonSettings).Apply(settings) with { PersonalCorrections = "[]" };

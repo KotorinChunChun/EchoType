@@ -14,6 +14,7 @@ public sealed partial class VoiceInputTarget
     private TextPatternRange? _range;
     private readonly EmEditorTarget? _emEditor;
     private readonly string _original;
+    private bool _preservePoint;
     private string _prefix = "", _suffix = "";
     private readonly string _automationId, _className;
     private readonly ControlType _controlType;
@@ -213,7 +214,7 @@ public sealed partial class VoiceInputTarget
             throw new InvalidOperationException("入力文は1〜16000文字です。制御文字は入力できません。");
         if (!CanReturnFocus) { LogFocus("blocked-before-input"); throw new InvalidOperationException("別のアプリへ移動したため入力を停止しました。"); }
         var initialForeground = GetForegroundWindow();
-        if (replace) Validate(); else ReadCurrentSelection();
+        if (replace || _preservePoint) Validate(); else ReadCurrentSelection();
         ct.ThrowIfCancellationRequested();
         // 決定用のキーと録音キーを離してから入力先へ戻す。
         for (var attempt = 0; attempt < 150 && InputKeysHeld(mainKey); attempt++) await Task.Delay(20, ct);

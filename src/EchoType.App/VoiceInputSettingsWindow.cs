@@ -5,10 +5,11 @@ namespace EchoType.App;
 /// <summary>通常録音の設定と分離した、音声入力専用の設定。</summary>
 public sealed class VoiceInputSettingsWindow : Window
 {
-    public VoiceInputSettingsWindow(VoiceInputController controller, string[] models)
+    public VoiceInputSettingsWindow(VoiceInputController controller)
     {
         Title = "音声入力の設定"; Width = 680; Height = 650; MinWidth = 500; MinHeight = 480;
         WindowStartupLocation = WindowStartupLocation.CenterOwner; Topmost = true;
+        SourceInitialized += (_, _) => VoiceInputWindow.RemoveMinimizeButton(this);
         var settings = controller.Settings;
         var panel = new StackPanel { Margin = new Thickness(20) };
         var layout = new DockPanel(); Content = layout;
@@ -57,49 +58,71 @@ public sealed class VoiceInputSettingsWindow : Window
         var seconds = Field("最大録音秒数（2〜300秒）", settings.MaximumSeconds.ToString());
         var gap = Field("入力欄との間隔（0〜200）", settings.TargetGap.ToString());
         System.Windows.Automation.AutomationProperties.SetAutomationId(gap, "VoiceTargetGap");
-        panel.Children.Add(new TextBlock { Text = "認識デバイス", Margin = new Thickness(0, 12, 0, 4) });
-        var compute = new ComboBox { ItemsSource = new[] { "cpu", "cuda" }, SelectedItem = settings.Recognition.LocalAsrDevice, MinHeight = 30 };
-        panel.Children.Add(compute);
-        var restart = new TextBlock { Text = controller.EngineRestartNotice, Foreground = System.Windows.Media.Brushes.Firebrick, TextWrapping = TextWrapping.Wrap, Margin = new(0, 6, 0, 0) };
-        panel.Children.Add(restart);
-        compute.SelectionChanged += (_, _) => restart.Text = compute.SelectedItem as string == settings.Recognition.LocalAsrDevice ? controller.EngineRestartNotice : "変更は保存後、次回のアプリ起動時に反映します。それまでは変更前の設定で動作します。";
-        panel.Children.Add(new TextBlock { Text = "途中認識の確定モデル（速報はWindowsで即時表示）", Margin = new Thickness(0, 12, 0, 4) });
-        var liveEngine = new ComboBox { ItemsSource = VoiceInputSettings.LiveEngines,
-            DisplayMemberPath = "Name", SelectedValuePath = "Id", SelectedValue = settings.LiveEngine, MinHeight = 30 };
-        panel.Children.Add(liveEngine);
-        var length = new CheckBox { Content = "Windowsとの文字数差を検査", IsChecked = settings.Recognition.AsrLengthCheckEnabled, Margin = new Thickness(0, 10, 0, 0) };
-        panel.Children.Add(length);
-        var recognitionModes = new[]
+        var finalSpeech = SpeechFields("確定モデル", settings.FinalSpeech());
+        var liveEnabled = new CheckBox { Content = "即時表示", IsChecked = settings.LiveDisplayEnabled, Margin = new Thickness(0, 14, 0, 4) };
+        panel.Children.Add(liveEnabled);
+        var liveSpeech = SpeechFields("即時表示モデル", settings.PreviewSpeech());
+        void UpdateLive() => liveSpeech.Panel.Visibility = liveEnabled.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        liveEnabled.Checked += (_, _) => UpdateLive();
+        liveEnabled.Unchecked += (_, _) => UpdateLive();
+        UpdateLive();
+
+        (StackPanel Panel, Func<ExternalSpeechSettings> Read) SpeechFields(string name, ExternalSpeechSettings value)
         {
-            new { Name = "このPCの音声認識", Mode = ExternalSpeechMode.Local },
-            new { Name = "外部サーバー（APIキーなし）", Mode = ExternalSpeechMode.Server },
-            new { Name = "外部API（APIキーあり）", Mode = ExternalSpeechMode.ApiKey }
-        };
-        var recognitionMode = new ComboBox { ItemsSource = recognitionModes, DisplayMemberPath = "Name", SelectedValuePath = "Mode",
-            SelectedValue = settings.ExternalSpeech.Mode, MinHeight = 30, ToolTip = "外部を選ぶと、録音した音声を指定の接続先へ送信します。" };
-        panel.Children.Add(new Label { Content = "音声認識先", Target = recognitionMode });
-        panel.Children.Add(recognitionMode);
-        var externalFields = new StackPanel();
-        var endpoint = new TextBox { Text = settings.ExternalSpeech.Endpoint, MaxLength = 2048, MinHeight = 30 };
-        externalFields.Children.Add(new Label { Content = "文字起こしAPIのURL（OpenAI互換）", Target = endpoint });
-        externalFields.Children.Add(endpoint);
-        var externalModel = new TextBox { Text = settings.ExternalSpeech.Model, MaxLength = 200, MinHeight = 30 };
-        externalFields.Children.Add(new Label { Content = "モデル名", Target = externalModel });
-        externalFields.Children.Add(externalModel);
-        var apiKey = new PasswordBox { Password = settings.ExternalSpeech.ApiKey, MaxLength = 4096, MinHeight = 30 };
-        var keyLabel = new Label { Content = "APIキー", Target = apiKey };
-        externalFields.Children.Add(keyLabel);
-        externalFields.Children.Add(apiKey);
-        panel.Children.Add(externalFields);
-        void UpdateRecognitionFields()
-        {
-            var mode = recognitionMode.SelectedValue is ExternalSpeechMode selected ? selected : ExternalSpeechMode.Local;
-            externalFields.Visibility = mode == ExternalSpeechMode.Local ? Visibility.Collapsed : Visibility.Visible;
-            apiKey.Visibility = keyLabel.Visibility = mode == ExternalSpeechMode.ApiKey ? Visibility.Visible : Visibility.Collapsed;
-            compute.IsEnabled = liveEngine.IsEnabled = length.IsEnabled = mode == ExternalSpeechMode.Local;
+            var fields = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+            panel.Children.Add(fields);
+            var modes = new[]
+            {
+                new { Name = "このPCの speech.cpp サーバー", Mode = ExternalSpeechMode.SpeechCpp },
+                new { Name = "外部サーバー（APIキーなし）", Mode = ExternalSpeechMode.Server },
+                new { Name = "外部API（APIキーあり）", Mode = ExternalSpeechMode.ApiKey }
+            };
+            var mode = new ComboBox { ItemsSource = modes, DisplayMemberPath = "Name", SelectedValuePath = "Mode", SelectedValue = value.Mode, MinHeight = 30 };
+            fields.Children.Add(new Label { Content = name + "の接続方式", Target = mode });
+            fields.Children.Add(mode);
+            var endpoint = new TextBox { Text = value.Endpoint, MaxLength = 2048, MinHeight = 30 };
+            fields.Children.Add(new Label { Content = "文字起こしAPIのURL", Target = endpoint });
+            fields.Children.Add(endpoint);
+            var model = new TextBox { Text = value.Model, MaxLength = 200, MinHeight = 30 };
+            fields.Children.Add(new Label { Content = name + "の名前", Target = model });
+            fields.Children.Add(model);
+            var key = new PasswordBox { Password = value.ApiKey, MaxLength = 4096, MinHeight = 30 };
+            var keyLabel = new Label { Content = "APIキー", Target = key };
+            fields.Children.Add(keyLabel);
+            fields.Children.Add(key);
+            void UpdateKey() => key.Visibility = keyLabel.Visibility = (ExternalSpeechMode)mode.SelectedValue == ExternalSpeechMode.ApiKey ? Visibility.Visible : Visibility.Collapsed;
+            mode.SelectionChanged += (_, _) => UpdateKey();
+            UpdateKey();
+            ExternalSpeechSettings Read() => new() { Mode = (ExternalSpeechMode)mode.SelectedValue, Endpoint = endpoint.Text.Trim(),
+                Model = model.Text.Trim(), ApiKey = (ExternalSpeechMode)mode.SelectedValue == ExternalSpeechMode.ApiKey ? key.Password : "" };
+
+            var check = new Button { Content = "接続テスト", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
+            var checkStatus = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            fields.Children.Add(check);
+            fields.Children.Add(checkStatus);
+            check.Click += async (_, _) =>
+            {
+                check.IsEnabled = false;
+                checkStatus.Text = "確認中…";
+                using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                void Cancel(object? sender, EventArgs args) => cancellation.Cancel();
+                Closed += Cancel;
+                try
+                {
+                    var selected = Read();
+                    checkStatus.Foreground = System.Windows.Media.Brushes.DarkSlateGray;
+                    checkStatus.Text = await Windows.ExternalSpeechRecognizer.CheckAsync(selected, cancellation.Token) + "  " + selected.Model;
+                }
+                catch (OperationCanceledException) { checkStatus.Text = "接続テストがタイムアウトまたは中止されました。"; }
+                catch (Exception ex)
+                {
+                    checkStatus.Foreground = System.Windows.Media.Brushes.Firebrick;
+                    checkStatus.Text = ex.Message;
+                }
+                finally { Closed -= Cancel; check.IsEnabled = true; }
+            };
+            return (fields, Read);
         }
-        recognitionMode.SelectionChanged += (_, _) => UpdateRecognitionFields();
-        UpdateRecognitionFields();
         var prompt = Field("プロンプト整形プロンプト", settings.FormattingPrompt, 8000);
         prompt.Height = 160; prompt.AcceptsReturn = true; prompt.TextWrapping = TextWrapping.Wrap; prompt.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         var defaults = new Button { Content = "整形プロンプトを既定に戻す", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
@@ -116,21 +139,21 @@ public sealed class VoiceInputSettingsWindow : Window
             {
                 if (!int.TryParse(seconds.Text, out var maximum)) throw new InvalidOperationException("録音秒数は整数で指定してください。");
                 if (!int.TryParse(gap.Text, out var targetGap)) throw new InvalidOperationException("入力欄との間隔は整数で指定してください。");
+                var final = finalSpeech.Read();
+                if (final != ExternalSpeechSettings.SpeechCppDefault) final.ValidateEndpoint();
+                var live = liveSpeech.Read();
+                if (liveEnabled.IsChecked == true) live.ValidateEndpoint();
                 controller.SaveSettings(controller.Settings with
                 {
-                    Enabled = enabled.IsChecked == true, MaximumSeconds = maximum, Models = models, LiveEngine = (string)liveEngine.SelectedValue,
-                    ExternalSpeech = new() { Mode = (ExternalSpeechMode)recognitionMode.SelectedValue, Endpoint = endpoint.Text.Trim(),
-                        Model = externalModel.Text.Trim(), ApiKey = apiKey.Password },
+                    Enabled = enabled.IsChecked == true, MaximumSeconds = maximum,
+                    ExternalSpeech = final == ExternalSpeechSettings.SpeechCppDefault ? new() : final,
+                    LiveDisplayEnabled = liveEnabled.IsChecked == true,
+                    LiveSpeech = live,
                     TargetGap = targetGap,
                     FormattingPrompt = prompt.Text, SimpleFormattingPrompt = simple.Text,
                     RecordingShortcut = new((VoiceModifierSide)controlKey.SelectedValue, (VoiceModifierSide)shiftKey.SelectedValue,
                         (VoiceModifierSide)altKey.SelectedValue, (VoiceModifierSide)windowsKey.SelectedValue, (int)mainKey.SelectedValue),
-                    SentenceEndings = endings.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct().ToArray(),
-                    Recognition = controller.Settings.Recognition with
-                    {
-                        LocalAsrDevice = (string)compute.SelectedItem, AsrLengthCheckEnabled = length.IsChecked == true,
-                        CloudTranscription = false
-                    }
+                    SentenceEndings = endings.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct().ToArray()
                 });
                 DialogResult = true;
             }

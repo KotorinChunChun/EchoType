@@ -88,32 +88,6 @@ internal static class VoiceInputTests
             }
             return Task.CompletedTask;
         }));
-        tests.Add(("自動入力への切替対象は未消費の認識待ちと完了分だけ", () =>
-        {
-            var buffer = new VoiceInputBuffer(); var number = buffer.Add();
-            buffer.Schedule(number, ["windows", "whisper-base"]);
-            if (!buffer.IsPending(number, "windows") || buffer.IsPending(number, "whisper-small")) throw new Exception("認識待ちまたは未割当の判定不正");
-            buffer.Complete(number, new("windows", "既に追記", .1)); buffer.Consume();
-            if (buffer.IsPending(number, "windows") || !buffer.IsPending(number, "whisper-base")) throw new Exception("追記済みと待機中を区別できない");
-            buffer.ConsumeRecordings([number]); buffer.Complete(number, new("whisper-base", "遅延完了", 1));
-            if (buffer.IsPending(number, "whisper-base")) throw new Exception("自動入力済み録音が遅延結果で復活");
-            return Task.CompletedTask;
-        }));
-        tests.Add(("自動入力済み録音だけを消費し遅延比較結果の再採用を防ぐ", () =>
-        {
-            var buffer = new VoiceInputBuffer();
-            var first = buffer.Add(); var next = buffer.Add();
-            buffer.Schedule(first, ["windows", "whisper-turbo"]);
-            buffer.Schedule(next, ["windows", "whisper-turbo"]);
-            buffer.Complete(first, new("windows", "採用済み", 1));
-            buffer.ConsumeRecordings([first]);
-            buffer.Complete(first, new("whisper-turbo", "遅延結果", 3));
-            buffer.Complete(next, new("windows", "追加分", 1));
-            if (buffer.Text("windows") != "追加分" || buffer.Text("whisper-turbo") != "" ||
-                buffer.Progress("whisper-turbo") != new VoiceInputProgress(0, 1, 0, 0))
-                throw new Exception("消費済み録音の復活または追加録音の消失");
-            return Task.CompletedTask;
-        }));
         tests.Add(("音声自動入力は既定オフでオンオフを保存", () =>
         {
             if (new VoiceInputSettings().AutomaticInput) throw new Exception("自動入力が既定でオン");
@@ -250,17 +224,6 @@ internal static class VoiceInputTests
             if (shared.Recognition.AsrVocabulary != "本体語彙" || shared.Recognition.CodexExecutable != "本体CLI") throw new Exception("本体設定が反映されない");
             return Task.CompletedTask;
         }));
-        tests.Add(("モデル速度は有効な比較の音声長正規化中央値で集計する", () =>
-        {
-            var comparisons = new[] {
-                new AsrComparison("a", DateTimeOffset.Now, 10, "", "", "windows", false, [new("windows", "文", 20) { RecognitionSeconds = 1 }, new("whisper-base", "文", 5) { RecognitionSeconds = 5 }, new("qwen3-0.6b", "旧本文", .001)]),
-                new AsrComparison("b", DateTimeOffset.Now, 20, "", "", "windows", false, [new("windows", "文", 25) { RecognitionSeconds = 2 }, new("whisper-base", "文", 2) { RecognitionSeconds = 2 }, new("qwen3-0.6b", "", .001, "失敗")]),
-                new AsrComparison("c", DateTimeOffset.Now, 10, "", "", "windows", false, [new("qwen3-0.6b", "再利用", .001) { Reused = true, RecognitionSeconds = .001 }]) };
-            var measured = VoiceModelSpeed.Measure(comparisons);
-            if (measured.Length != 2 || measured[0] != ("windows", 2, .1) || measured[1] != ("whisper-base", 2, .3)) throw new Exception("速度集計不正");
-            if (InputDevice.Defaults[0].Number != -1 || InputDevice.Defaults[1].Number != -2 || InputDevice.Resolve(InputDevice.Defaults, -2, InputDevice.Defaults[1].Name).Number != -2) throw new Exception("既定入力の選択不正");
-            return Task.CompletedTask;
-        }));
         tests.Add(("追記の句点は未付与時だけ補いエフォート3段階を保存", () =>
         {
             if (VoiceInputSettings.AppendSentence("文 ") != "文。" || VoiceInputSettings.AppendSentence("文。\r\n") != "文。" || VoiceInputSettings.AppendSentence(" ") != "") throw new Exception("句点補完不正");
@@ -281,17 +244,7 @@ internal static class VoiceInputTests
             if (!deleted.Before.SequenceEqual(new[] { false, true, false }) || deleted.After.Any(x => x)) throw new Exception("削除行不正");
             return Task.CompletedTask;
         }));
-        tests.Add(("速報は精度優先認識を待たず表示し解放時の結果で置換する", async () =>
-        {
-            var fast = new FakeLive("速報"); var precise = new FakeLive("精度優先");
-            using var preview = new VoiceInputPreview(fast, precise); var text = "";
-            preview.Updated += s => text = s; preview.Feed(new byte[2400]);
-            if (text != "速報") throw new Exception("速報が出ません");
-            var pending = preview.CompleteAsync(CancellationToken.None); fast.Complete.SetResult();
-            if (pending.IsCompleted || text != "速報") throw new Exception("精度優先待ちで速報を消しました");
-            precise.Complete.SetResult(); if ((await pending).Text != "精度優先") throw new Exception("確定結果不正");
-        }));
-        tests.Add(("精度優先の途中認識は3秒の文脈・最新スナップショット・中止を守る", async () =>
+        tests.Add(("即時表示の認識は1秒ごとに最新の音声を使い中止できる", async () =>
         {
             var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -301,36 +254,17 @@ internal static class VoiceInputTests
                 seconds.Enqueue(segment.Seconds); started.TrySetResult(); await first.Task.WaitAsync(ct);
                 return new("whisper-turbo", $"認識{segment.Seconds}", .1);
             });
-            live.Feed(new byte[48000 * 2]); await Task.Delay(30);
+            live.Feed(new byte[24000]); await Task.Delay(30);
             if (!seconds.IsEmpty) throw new Exception("文脈の短い音声を認識しました");
-            live.Feed(new byte[48000]); await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            live.Feed(new byte[48000 * 4]); first.SetResult();
+            live.Feed(new byte[24000]); await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            live.Feed(new byte[48000 * 6]); first.SetResult();
             var result = await live.CompleteAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(3));
-            if (result.Text != "認識7" || seconds.Any(s => s is not (3 or 7))) throw new Exception("途中の仮説を連結または古い音声を逐次処理しました");
+            if (result.Text != "認識7" || seconds.Any(s => s is not (1 or 7))) throw new Exception("途中の仮説を連結または古い音声を逐次処理しました");
             using var longLive = new VoiceInputAccurateLive((segment, _) => Task.FromResult(new AsrResult("whisper-turbo", $"区間{segment.Seconds}", .1)));
             longLive.Feed(new byte[48000 * 70]);
             if ((await longLive.CompleteAsync(CancellationToken.None)).Text != "区間30区間30区間10") throw new Exception("長い押下音声の確定区間を落としました");
             using var cancel = new VoiceInputAccurateLive(async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return new("whisper-turbo", "", 0); });
             cancel.Feed(new byte[48000 * 3]); cancel.Dispose(); await cancel.Stopped.WaitAsync(TimeSpan.FromSeconds(3));
-        }));
-        tests.Add(("音声入力はモデル別に即時公開し改行なし・累計・追記済み録音を保持", () =>
-        {
-            var buffer = new VoiceInputBuffer(); var a = buffer.Add(); var b = buffer.Add(); var c = buffer.Add();
-            foreach (var n in new[] { a, b, c }) buffer.Schedule(n, ["windows", "whisper-turbo"]);
-            buffer.Complete(b, new("windows", "二つ目", .1));
-            if (buffer.Text("windows") != "二つ目") throw new Exception("先行・他モデルを待ちました");
-            buffer.Complete(a, new("windows", "一つ目", .2));
-            if (buffer.Text("windows") != "一つ目二つ目") throw new Exception("録音順・改行不正");
-            buffer.Consume(); if (buffer.Text("windows") != "") throw new Exception("確定済み文が残りました");
-            buffer.Complete(a, new("whisper-turbo", "遅いモデル", 5));
-            if (buffer.Text("whisper-turbo") != "遅いモデル") throw new Exception("未完了だったモデルの結果が失われました");
-            buffer.Complete(c, new("windows", "三つ目", .1));
-            if (buffer.Text("windows") != "三つ目") throw new Exception("追記済み文が復活しました");
-            var progress = buffer.Progress("windows");
-            if (progress.Completed != 1 || progress.Total != 1 || Math.Abs(progress.Seconds - .1) > .001) throw new Exception("進捗・累計時間不正");
-            buffer.Complete(b, new("whisper-turbo", "", 2, "試験エラー"));
-            if (buffer.Progress("whisper-turbo") != new VoiceInputProgress(2, 3, 1, 7)) throw new Exception("失敗の件数・時間を落としました");
-            return Task.CompletedTask;
         }));
         tests.Add(("音声入力キャッシュは暗号化往復と閉鎖後の書込み拒否・削除を行う", () =>
         {
@@ -444,14 +378,6 @@ internal static class VoiceInputTests
             if (!firstFrame.SequenceEqual(original[..2400]) || !pcm.SequenceEqual(original)) throw new Exception("表示倍率でPCMが変更されています。");
             if (capture.Meter().Waveform.Length != 0 || capture.Meter().Rms != 0) throw new Exception("停止した録音の波形が残っています。");
         }));
-    }
-    private sealed class FakeLive(string text) : IVoiceInputLive
-    {
-        public TaskCompletionSource Complete { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public event Action<string>? Updated;
-        public void Feed(byte[] pcm) => Updated?.Invoke(text);
-        public async Task<VoiceInputLiveResult> CompleteAsync(CancellationToken ct) { await Complete.Task.WaitAsync(ct); return new(text); }
-        public void Dispose() { }
     }
     private sealed class FakeInput : IWaveIn
     {

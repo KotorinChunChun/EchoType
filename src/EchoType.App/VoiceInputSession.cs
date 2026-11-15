@@ -9,9 +9,8 @@ internal sealed class VoiceInputSession(AgentPaths paths)
 {
     public CancellationTokenSource Cancellation { get; } = new();
     public VoiceInputCache Cache { get; } = new(paths);
-    public VoiceInputBuffer Buffer { get; } = new();
+    public int RecordingSequence { get; set; }
     public ObservableCollection<VoiceInputLogEntry> Entries { get; } = [];
-    public Dictionary<(int Number, string Engine), CancellationTokenSource> RecognitionJobs { get; } = [];
     public bool Closed { get; set; }
     public int Pending => Entries.Count(e => !e.Finished);
 }
@@ -34,9 +33,10 @@ public sealed class VoiceInputLogEntry : INotifyPropertyChanged
     public AsrResult[] Results { get; set; } = [];
     public SpeechSegment? Metadata { get; set; }
     public VoiceInputSettings? RecognitionSettings { get; set; }
+    public bool DraftHandled { get; set; }
     public bool Finished { get; set; }
     public bool LiveFinished { get; set; }
-    public string Details => (LiveEngine.Length == 0 ? "" : $"{AsrEngines.Get(LiveEngine).Name} 途中認識: {LiveText}\n{LiveError}\n") + string.Join("\n", Results.Select(r => $"{AsrEngines.Get(r.EngineId).Name}: 待ち {r.PendingSeconds + r.QueueSeconds:F2}秒 / 認識 {r.RecognitionSeconds ?? r.ProcessingSeconds:F2}秒 / {r.Text} {r.Error}"));
+    public string Details => (LiveEngine.Length == 0 ? "" : $"{LiveEngine} 途中認識: {LiveText}\n{LiveError}\n") + string.Join("\n", Results.Select(r => $"{RecognitionSettings?.FinalSpeech().Model}: 待ち {r.PendingSeconds + r.QueueSeconds:F2}秒 / 認識 {r.RecognitionSeconds ?? r.ProcessingSeconds:F2}秒 / {r.Text} {r.Error}"));
     public event PropertyChangedEventHandler? PropertyChanged;
     public void Changed() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(""));
 }

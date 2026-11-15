@@ -109,7 +109,7 @@ public sealed partial class VoiceInputTarget
                     range.MoveEndpointByRange(TextPatternRangeEndpoint.Start, range, TextPatternRangeEndpoint.End);
                 }
             }
-            return new(element, pattern, range);
+            return new VoiceInputTarget(element, pattern, range) { _preservePoint = point is not null && range is not null };
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException) { errors?.Add(ex.Message); return null; }
     }

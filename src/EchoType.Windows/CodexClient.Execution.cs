@@ -40,12 +40,15 @@ public sealed partial class CodexClient
         AgentPaths.RequireLocalPath(settings.CodexExecutable);
         if (!string.Equals(Path.GetFileName(settings.CodexExecutable), "codex.exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Codex CLIのcodex.exeを指定してください。");
         var id = Guid.NewGuid().ToString("N");
-        var schemaPath = Path.Combine(paths.Model, id + ".schema.json");
+        var workingDirectory = Path.Combine(paths.Root, "cache", "format");
+        Directory.CreateDirectory(workingDirectory);
+        AgentPaths.RequireLocalPath(workingDirectory, true);
+        var schemaPath = Path.Combine(workingDirectory, id + ".schema.json");
         await File.WriteAllTextAsync(schemaPath, schema, ct);
-        var output = Path.Combine(paths.Model, id + ".json");
+        var output = Path.Combine(workingDirectory, id + ".json");
         var start = new ProcessStartInfo(settings.CodexExecutable)
         {
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = paths.Model,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = workingDirectory,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };

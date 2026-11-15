@@ -20,7 +20,7 @@ internal static class MigrationTests
                 ("voice-input-settings", "current", savedVoice), ("voice-profile", "profile", profile),
                 ("personal-word", word.Id, word), ("transcript", "recorded", "移行対象外"));
             var original = File.ReadAllBytes(file);
-            var paths = new AgentPaths(Path.Combine(root, "new"), source);
+            var paths = new AgentPaths(Path.Combine(root, "new"));
             using var store = new SecureStore(paths);
             store.ImportDesktopAgent(source);
             var imported = store.LoadVoiceInputSettings();
@@ -39,7 +39,8 @@ internal static class MigrationTests
             using var count = destination.CreateCommand();
             count.CommandText = "SELECT COUNT(*) FROM entries WHERE kind='transcript'";
             Require(Convert.ToInt32(count.ExecuteScalar()) == 0, "会話の文字起こしは対象外");
-            Require(File.ReadAllBytes(file).SequenceEqual(original) && paths.Model != paths.RecognitionModels, "旧DBとモデル参照先を分離");
+            Require(File.ReadAllBytes(file).SequenceEqual(original) && !Directory.Exists(Path.Combine(paths.Root, "model")),
+                "旧DBを変更せずEchoType専用のモデル領域を作らない");
             return Task.CompletedTask;
         }));
 

@@ -5,7 +5,8 @@ if (args is ["--isolated-app", var app]) return IsolatedDesktopDiagnostics.Run("
 if (args is ["--isolated-app-legacy-settings", var legacyApp]) return IsolatedDesktopDiagnostics.Run("app-legacy", legacyApp);
 if (args is ["--queue-child"]) return VoiceInputQueueDiagnostics.Run();
 if (args is ["--focus-child"]) return VoiceInputMonitorDiagnostics.Run(20);
-if (args is ["--whisper-setup-smoke", var wave]) return await WhisperSetupDiagnostics.RunAsync(wave);
+if (args is ["--focus-interactive"]) return VoiceInputMonitorDiagnostics.Run(1, interactive: true);
+if (args is ["--speech-loopback", var endpoint]) return await ExternalSpeechTests.LoopbackAsync(endpoint);
 if (args.Length != 0) return 2;
 
 var root = Path.Combine(AppContext.BaseDirectory, "test-output", Guid.NewGuid().ToString("N"));

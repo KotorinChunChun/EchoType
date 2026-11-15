@@ -35,6 +35,13 @@ internal static class VoiceInputNativeFocusDiagnostics
             var first = closeWindow = handles[0]; var second = handles[1]; var other = handles[2]; var edits = handles.Skip(3).ToArray();
             using var store = new SecureStore(new AgentPaths(Path.Combine(AppContext.BaseDirectory, "test-output", "native-focus-" + Guid.NewGuid().ToString("N"))));
             controller = new(store.Paths, store, app.Dispatcher, true, true, keyState: _ => false);
+            if (interactive)
+            {
+                SendMessage(first, 0x8001, edits[0], 1);
+                if (VoiceInputTarget.ForegroundWindow != first)
+                    Console.WriteLine("30秒以内に検証専用設定ウィンドウを前面にしてください。");
+                for (var attempt = 0; attempt < 300 && VoiceInputTarget.ForegroundWindow != first; attempt++) await Task.Delay(100);
+            }
             foreach (var edit in edits)
             {
                 SendMessage(first, 0x8001, edit, interactive ? 1 : 0); await Task.Delay(80);
@@ -70,6 +77,7 @@ internal static class VoiceInputNativeFocusDiagnostics
                 samples++; await Task.Delay(25);
             }
             Console.WriteLine($"PASS 標準Win32 Editの未保存状態から別窓へ移動し{watch.Elapsed.TotalSeconds:F2}秒・{samples}標本で検証UIスレッド内のアクティブ窓と入力フォーカスを維持 / 通常画面={interactive}");
+            if (interactive) await VerifyConfirmAsync(app, controller, first, second, edits[0], edits[1], other);
         }
         catch (Exception ex) { Console.Error.WriteLine("native試験の元例外: " + ex); throw; }
         finally
@@ -78,6 +86,48 @@ internal static class VoiceInputNativeFocusDiagnostics
             if (interactive && previousForeground != 0 && fixture.Id == ForegroundProcessId()) SetForegroundWindow(previousForeground);
             if (!fixture.HasExited) { if (closeWindow != 0) PostMessage(closeWindow, 0x0010, 0, 0); else fixture.CloseMainWindow(); try { await fixture.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)); } catch (TimeoutException) { Console.Error.WriteLine("検証fixtureは親の専用Job終了時に回収"); } }
         }
+    }
+
+    private static async Task VerifyConfirmAsync(Application app, VoiceInputController controller,
+        nint first, nint second, nint edit, nint untouched, nint other)
+    {
+        static string Read(nint handle) => ((ValuePattern)AutomationElement.FromHandle(handle)
+            .GetCurrentPattern(ValuePattern.Pattern)).Current.Value;
+        var untouchedText = await Task.Run(() => Read(untouched));
+        var otherText = await Task.Run(() => Read(other));
+        var bounds = await Task.Run(() => AutomationElement.FromHandle(edit).Current.BoundingRectangle);
+        var point = new Point(bounds.Right - 8, bounds.Top + bounds.Height / 2);
+        controller.Open();
+        var window = app.Windows.OfType<VoiceInputWindow>().Single();
+        await controller.PickTargetAsync(point);
+        var target = (System.Windows.Controls.TextBox)window.FindName("TargetPath");
+        Require(target.Text.Contains("AutomationId=240"), "指定座標から目的の編集欄を取得");
+        var button = (System.Windows.Controls.Button)window.FindName("ConfirmButton");
+        void Confirm() => ((System.Windows.Automation.Provider.IInvokeProvider)
+            new System.Windows.Automation.Peers.ButtonAutomationPeer(button)).Invoke();
+        static async Task Wait(Func<bool> done)
+        {
+            for (var i = 0; i < 100 && !done(); i++) await Task.Delay(50);
+            Require(done(), "決定処理を期限内に完了");
+        }
+
+        window.DraftText = "確定本文";
+        SendMessage(second, 0x8001, other, 1);
+        await Task.Delay(100);
+        Require(VoiceInputTarget.ForegroundWindow == second, "決定前に別窓を前面にする");
+        Confirm();
+        var status = (System.Windows.Controls.TextBlock)window.FindName("StatusText");
+        await Wait(() => status.Text.Contains("別のアプリへ移動"));
+        Require(await Task.Run(() => Read(edit)) == "明示入力の検証" && await Task.Run(() => Read(other)) == otherText,
+            "別窓を前面にした場合は、どちらの欄にも書かずエラーを表示");
+
+        window.FocusDraft();
+        Confirm();
+        await Wait(() => !window.IsVisible);
+        Require(await Task.Run(() => Read(edit)) == "明示入力の検証確定本文" &&
+            await Task.Run(() => Read(untouched)) == untouchedText && await Task.Run(() => Read(other)) == otherText,
+            "本物の決定ボタンで指定欄に追記し、同じ窓の別欄と別窓は変更しない");
+        Require(VoiceInputTarget.ForegroundWindow == first, "入力後に指定窓が前面にある");
     }
     private static nint Dispatch(nint hwnd, uint message, nint wParam, nint lParam)
     {

@@ -32,6 +32,6 @@ $test = '.\tests\EchoType.Tests\bin\Debug\net10.0-windows\EchoType.Tests.exe'
 
 Python 系のローカルモデルと対応する環境は `--model-root` で指定したフォルダーから読みます。旧 DesktopAgent の `model` または同じ階層構成の共有モデルを指定できます。整形の一時ファイルと診断は EchoType 側に保存します。EchoType 専用に導入する場合は `pwsh -NoProfile -File dev/scripts/setup-asr.ps1 -Models whisper-base,whisper-turbo` を使います。Haas は既存の共通フォルダーを参照し、導入が必要なら `dev/scripts/setup-haas.ps1` を使います。
 
-初回画面からの Whisper 準備では EchoType 専用の Python 実行環境を使い、重みは配布元と固定リビジョンごとに共用します。`--data-root` で分離したプロファイルは専用プロファイル内のモデル庫を使用します。合成音声で準備と CPU 認識を確認するには、既知の文「今日は音声認識のテストです。」を合成した WAV を `& $test --whisper-setup-smoke <WAV>` へ渡します。公式配布元から試験専用フォルダーに依存と重みを取得します。
+通知領域からの Whisper 準備では EchoType 専用の Python 実行環境を使い、重みは配布元と固定リビジョンごとに共用します。`--data-root` で分離したプロファイルは専用プロファイル内のモデル庫を使用します。合成音声で準備と CPU 認識を確認するには、既知の文「今日は音声認識のテストです。」を合成した WAV を `& $test --whisper-setup-smoke <WAV>` へ渡します。公式配布元から試験専用フォルダーに依存と重みを取得します。
 
 ライブキャプション UIA は Windows 全体の字幕を観測します。DesktopAgent と同一のユーザー別排他制御を使います。音源一致を保証できないため自動採用の先頭モデルには使えません。入力先監視時は Win32 のフォーカス情報だけを確認し、UIA による本文の取得や前面化は明示操作時に限定します。

@@ -11,6 +11,7 @@ if (args.Length != 0) return 2;
 var root = Path.Combine(AppContext.BaseDirectory, "test-output", Guid.NewGuid().ToString("N"));
 var tests = new List<(string Name, Func<Task> Test)>();
 VoiceInputTests.Add(tests, root);
+tests.Add(("外部認識の選択・保存と要求形式、APIキーと失敗メッセージを確認", () => ExternalSpeechTests.RunAsync(root)));
 MigrationTests.Add(tests, root);
 var failures = 0;
 foreach (var (name, test) in tests)

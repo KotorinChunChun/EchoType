@@ -47,6 +47,7 @@ public static class AsrEngines
         new(GeminiTranscribe, "Gemini 3.5 Transcribe", true)
     ];
     public const string GeminiTranscribe = "gemini-transcribe";
+    public const string ExternalTranscription = "external-transcription";
     public const string Haas = "haas-ja-v1";
     public static bool CloudAllowed(AppSettings settings, string id) => BaseId(id) == GeminiTranscribe ? settings.GeminiTranscription : settings.CloudTranscription;
     public const string WindowsCaptions = "windows-live-captions";
@@ -55,6 +56,7 @@ public static class AsrEngines
     public static readonly AsrEngine[] All = [.. Recognition];
     // 旧履歴のモデル名・計測条件を読むための互換情報。選択欄には公開しない。
     private static readonly AsrEngine[] Legacy = [
+        new(ExternalTranscription, "外部音声認識", true),
         new("qwen3-1.7b", "Qwen3-ASR 1.7B（公式・日本語対応）"),
         new("whisper-turbo-nohint", "Whisper large-v3-turbo（ヒントなし）")
     ];

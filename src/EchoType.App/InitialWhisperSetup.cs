@@ -27,18 +27,11 @@ internal sealed class InitialWhisperSetup : Window
         if (active.IsVisible) active.Close();
     }
 
-    private static string DismissedPath(AgentPaths paths) => Path.Combine(paths.Root, "control", "whisper-intro-dismissed");
 
-    private static string[] SelectedModels(VoiceInputSettings settings) => (settings.AutomaticInput
+    private static string[] SelectedModels(VoiceInputSettings settings) => settings.ExternalSpeech.Enabled ? [] : (settings.AutomaticInput
         ? settings.RecognitionModels()
         : settings.RecognitionModels().Append(settings.LiveEngine))
         .Where(AsrEngines.IsWhisper).Select(AsrEngines.ModelId).Distinct().ToArray();
-
-    public static void ShowIfNeeded(AgentPaths paths, VoiceInputSettings settings, Action onReady)
-    {
-        if (!settings.Enabled || paths.HasModelOverride || File.Exists(DismissedPath(paths))) return;
-        if (SelectedModels(settings).Any(model => !LocalAsrWorker.IsReady(paths, model))) Show(paths, settings, onReady);
-    }
 
     public static void Show(AgentPaths paths, VoiceInputSettings settings, Action onReady)
     {
@@ -63,7 +56,7 @@ internal sealed class InitialWhisperSetup : Window
         var panel = new StackPanel { Margin = new Thickness(20) };
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10) };
         var missing = models.Where(model => !LocalAsrWorker.IsReady(paths, model)).ToArray();
-        if (models.Length == 0) summary.Text = "利用設定にWhisperモデルが選ばれていません。";
+        if (models.Length == 0) summary.Text = "Whisperを使う場合は、設定でモデルを選択してください。";
         else if (missing.Length == 0) summary.Text = "選択中のWhisperモデルは準備済みです。";
         else if (paths.HasModelOverride) summary.Text = "起動時に指定されたモデル環境の準備状況を確認してください。";
         else summary.Text = "選択中のWhisperモデルを準備します。必要なファイルを取得するにはインターネット接続が必要です。";
@@ -100,15 +93,7 @@ internal sealed class InitialWhisperSetup : Window
             args.Cancel = true;
             installation.Cancel();
         };
-        Closed += (_, _) =>
-        {
-            if (missing.Length > 0 && !paths.HasModelOverride)
-            {
-                try { File.WriteAllText(DismissedPath(paths), "1"); }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
-            }
-            _active = null;
-        };
+        Closed += (_, _) => _active = null;
     }
 
     private async Task PrepareAsync()

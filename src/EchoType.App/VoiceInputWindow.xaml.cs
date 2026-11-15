@@ -29,7 +29,8 @@ public partial class VoiceInputWindow : Window
         ShowAutomaticSettings(settings);
         ReadCurrentText.IsChecked = settings.ReplaceTargetText;
         CaretPosition.Text = settings.ReplaceTargetText ? "置換予定文字列" : "送信予定文字列";
-        PreviewCards = Enumerable.Range(0, 8).Select(i => new VoiceInputCard(settings.Models.ElementAtOrDefault(i) ?? "", controller.ModelSpeedOrder)).ToArray();
+        var models = settings.CandidateModels();
+        PreviewCards = Enumerable.Range(0, 8).Select(i => new VoiceInputCard(models.ElementAtOrDefault(i) ?? "", controller.ModelSpeedOrder, settings.ExternalSpeech.Enabled)).ToArray();
         foreach (var card in PreviewCards) card.EngineChanged += () =>
         {
             if (_initializing) return;
@@ -197,14 +198,17 @@ public partial class VoiceInputWindow : Window
     private void Delete_Click(object sender, RoutedEventArgs e) { _controller.ClearCandidates(); SetStatus("完了済みの候補だけを消去しました。処理中・録音中の音声は継続します。"); }
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
-        _settingsWindow = new VoiceInputSettingsWindow(_controller, PreviewCards.Select(c => c.EngineId).ToArray()) { Owner = this };
-        try { _settingsWindow.ShowDialog(); } finally { _settingsWindow = null; }
+        _settingsWindow = new VoiceInputSettingsWindow(_controller, _controller.Settings.Models) { Owner = this };
+        try { if (_settingsWindow.ShowDialog() == true) ShowProfileSettings(_controller.Settings); }
+        finally { _settingsWindow = null; }
     }
     public void ShowProfileSettings(VoiceInputSettings settings)
     {
         var initializing = _initializing; _initializing = true;
         try {
-        for (var i = 0; i < PreviewCards.Length; i++) PreviewCards[i].EngineId = settings.Models.ElementAtOrDefault(i) ?? "";
+        var models = settings.CandidateModels();
+        for (var i = 0; i < PreviewCards.Length; i++)
+            PreviewCards[i].SetModel(models.ElementAtOrDefault(i) ?? "", settings.ExternalSpeech.Enabled);
         FormattingModel.SelectedItem = settings.FormattingModel; FormattingEffort.SelectedItem = settings.FormattingEffort;
         ShowAutomaticSettings(settings);
         } finally { _initializing = initializing; }
@@ -357,19 +361,27 @@ public partial class VoiceInputWindow : Window
     [DllImport("user32.dll")] private static extern bool GetPhysicalCursorPos(out NativePoint point);
 }
 
-public sealed class VoiceInputCard(string engine, string[]? speedOrder = null) : INotifyPropertyChanged
+public sealed class VoiceInputCard(string engine, string[]? speedOrder = null, bool external = false) : INotifyPropertyChanged
 {
     public event Action? EngineChanged;
     public event PropertyChangedEventHandler? PropertyChanged;
-    public AsrEngine[] Engines => [.. VoiceInputSettings.LocalEngines.OrderBy(e => Array.IndexOf(speedOrder ?? VoiceModelSpeed.Fallback, e.Id)), new("", "未割り当て")];
+    public AsrEngine[] Engines => _external ? [AsrEngines.Get(AsrEngines.ExternalTranscription), new("", "未割り当て")] :
+        [.. VoiceInputSettings.LocalEngines.OrderBy(e => Array.IndexOf(speedOrder ?? VoiceModelSpeed.Fallback, e.Id)), new("", "未割り当て")];
     private string _engine = engine, _text = "";
-    private bool _busy, _succeeded, _selectionLocked;
+    private bool _busy, _succeeded, _selectionLocked, _external = external;
     public string EngineId { get => _engine; set { if (_engine == value || value is null) return; _engine = value; Show(null); EngineChanged?.Invoke(); } }
     public string Text { get => _text; set { _text = value; Notify(); } }
     public string Summary { get; private set; } = "録音待ち";
     public double Seconds { get; private set; }
     public double SpeedPercent { get; private set; }
-    public bool Editable => !_busy && !_selectionLocked;
+    public bool Editable => !_busy && !_selectionLocked && !_external;
+    public void SetModel(string engineId, bool useExternal)
+    {
+        var changed = _external != useExternal;
+        _external = useExternal;
+        EngineId = engineId;
+        if (changed) Notify();
+    }
     public bool ReadOnly => true;
     public bool CanConfirm => !_busy && _succeeded && !string.IsNullOrWhiteSpace(Text);
     public bool CanClear => !_busy;

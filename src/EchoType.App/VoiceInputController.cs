@@ -207,6 +207,7 @@ public sealed partial class VoiceInputController
         var keysChanged = shortcut != Settings.GetRecordingShortcut();
         var previous = Settings.Recognition;
         PersistSettings(settings);
+        if (settings.ExternalSpeech.Enabled) _warmupCancellation?.Cancel();
         var saved = settings.Recognition with { Performance = _store.LoadSettings().Performance };
         var logged = EngineSettingsJournal.Change(_paths, "saved", previous, saved, _liveAsr.EffectiveSettings(saved), voice: true);
         Status?.Invoke((EngineRestartNotice.Length > 0 ? EngineRestartNotice : "音声入力の設定を保存しました。") + (logged ? "" : "診断ログを保存できません。"));
@@ -275,15 +276,17 @@ public sealed partial class VoiceInputController
         VoiceInputCapture? startingCapture = null;
         try
         {
-            if (session.Pending == 0 && _window is not null) SaveSettings(Settings with { Models = _window.PreviewCards.Select(c => c.EngineId).ToArray() });
+            if (!Settings.ExternalSpeech.Enabled && session.Pending == 0 && _window is not null)
+                SaveSettings(Settings with { Models = _window.PreviewCards.Select(c => c.EngineId).ToArray() });
             Settings.Validate(); StopPlayback(); StopMonitor();
             _window?.ResetFormattingDiff();
             var device = ResolveDevice(); _recordingDevice = device.Name;
             if (UsesVoiceCaptions() && (_voiceCaptionSnapshot is not { Ready: true } || !WindowsCaptionComparison.LiveReady(AudioSourceKind.Microphone, VoiceCaptionSettings())))
                 throw new InvalidOperationException("Windows字幕の準備が完了していません。既定マイクと日本語の設定を確認し、字幕を使用中の処理が終わってから押し直してください。");
-            var live = startingLive = Settings.AutomaticInput ? new NoPreview() : _liveFactory();
+            var noPreview = Settings.AutomaticInput || Settings.ExternalSpeech.Enabled;
+            var live = startingLive = noPreview ? new NoPreview() : _liveFactory();
             var capture = startingCapture = new VoiceInputCapture(_openInput(device), Settings.MaximumSeconds);
-            var entry = new VoiceInputLogEntry { Number = session.Buffer.Add(), LiveEngine = Settings.AutomaticInput ? "" : Settings.LiveEngine }; session.Entries.Add(entry);
+            var entry = new VoiceInputLogEntry { Number = session.Buffer.Add(), LiveEngine = noPreview ? "" : Settings.LiveEngine }; session.Entries.Add(entry);
             var effective = Effective(Settings);
             var recording = new Recording(session, entry, capture, live, effective with { Recognition = effective.Recognition with { DeviceNumber = device.Number, DeviceName = device.Name } }); _recording = recording; _capture = capture;
             _previewRecordings.Add(recording);
@@ -416,9 +419,11 @@ public sealed partial class VoiceInputController
                     try
                     {
                         var input = metadata with { Wave = wave };
-                        return _recognize is null ? await _asrs[lane].RecognizeCheckedAsync(engine, input, config, token,
-                            purpose: engine == settings.Models.First(m => m.Length > 0) ? RecognitionPurpose.Full : RecognitionPurpose.Comparison)
-                            : await _recognize(engine, input, config, token);
+                        if (_recognize is not null) return await _recognize(engine, input, config, token);
+                        if (engine == AsrEngines.ExternalTranscription)
+                            return await ExternalSpeechRecognizer.RecognizeAsync(wave, settings.ExternalSpeech, token);
+                        return await _asrs[lane].RecognizeCheckedAsync(engine, input, config, token,
+                            purpose: engine == settings.Models.First(m => m.Length > 0) ? RecognitionPurpose.Full : RecognitionPurpose.Comparison);
                     }
                     finally { Array.Clear(wave); }
                 }, token);

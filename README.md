@@ -10,11 +10,14 @@ DesktopAgent の専用音声入力を無効にしてから通常起動してく�
 
 ```powershell
 cd C:\develop\KotorinToys\tools\EchoType
-$oldModels = Join-Path $env:LOCALAPPDATA 'DesktopAgent\model'
-.\release\v0.1.0\EchoType.exe --model-root $oldModels
+.\release\v0.1.0\EchoType.exe
 ```
 
-手動で最初に画面を開いたとき、選択中の Whisper モデルに不足があれば準備を案内します。初期設定では Whisper base と turbo を使います。「準備する」で不足する重みと EchoType 専用の実行環境を用意できます。「あとで」を選んだ後は通知領域の「音声認識モデル」から開き直せます。取得にはインターネット接続が必要です。
+新規設定の音声認識はWindows標準です。Whisperを使う場合はモデルを選び、通知領域の「音声認識モデル」で「準備する」を押します。準備時に不足する重みとEchoType専用の実行環境を取得します。取得にはインターネット接続が必要です。
+
+外部で文字起こしするには、設定の「音声認識先」でAPIキーなしのサーバーまたはAPIキー付きの接続を選びます。OpenAI互換の文字起こしURLとモデル名を指定します。録音キーを離すと確定音声を指定先に送り、文字起こしを受け取ります。外部認識ではローカルのWhisperやPythonの準備は不要です。
+
+配布版の起動には [.NET 10 Desktop Runtime（x64）](https://dotnet.microsoft.com/ja-jp/download/dotnet/10.0) が必要です。未導入の場合はセットアップで案内します。
 
 検証済みの Whisper の重みは `C:/AI/Models/Speech/Whisper/Shared` で共用できます。保存できない場合は `%LOCALAPPDATA%/KotorinToys/Models/Speech/Whisper` を使います。`--model-root` は既存の重みと対応する Python 環境を指定するためのオプションです。Haas は `C:/AI/Models/Speech/Haas` を参照します。
 
@@ -30,7 +33,7 @@ if ($LASTEXITCODE -ne 0) { throw "移行に失敗しました。終了コード 
 
 移行は旧データベースを読み取り専用で開き、同じ ID の既存 EchoType 設定を保持します。移行中は常駐・録音・ホットキーを起動しません。旧版の未送信履歴はプロセス終了で消えるため、必要な下書きは旧版の「未送信」から呼び戻し、切替前に手元へ控えてください。EchoType でも未送信履歴は実行中のメモリに保持します。
 
-認識音声はローカルで処理します。Codex CLI による整形を選ぶと、編集本文と整形指示・関連する辞書がその接続へ送られます。
+このPCの音声認識を選ぶと、音声はローカルで処理します。Codex CLI による整形を選ぶと、編集本文と整形指示・関連する辞書がその接続へ送られます。
 
 [ビルドと開発検証](docs/DEVELOPERS_GUIDE.md) · [開発記録](dev/README.md)
 

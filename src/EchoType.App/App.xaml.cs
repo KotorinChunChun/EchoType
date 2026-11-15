@@ -77,8 +77,8 @@ public partial class App : Application
             SystemEvents.SessionSwitch += SessionSwitch;
             _voice.StartWhisperWarmup();
             _management = new(Dispatcher, root, options.GetValueOrDefault("--launch-origin") ?? "standalone",
-                () => ShowInput(paths, isolated), () => _ = ExitAsync(), _voice.ManagementStopBlockReason);
-            if (!background) ShowInput(paths, isolated);
+                _voice.Open, () => _ = ExitAsync(), _voice.ManagementStopBlockReason);
+            if (!background) _voice.Open();
         }
         catch (Exception ex)
         {
@@ -114,17 +114,11 @@ public partial class App : Application
         return options;
     }
 
-    private void ShowInput(AgentPaths paths, bool isolated)
-    {
-        _voice!.Open();
-        if (!isolated && !_voice.IsPaused) InitialWhisperSetup.ShowIfNeeded(paths, _voice.Settings, _voice.StartWhisperWarmup);
-    }
-
     private void CreateTray(AgentPaths paths, bool isolated)
     {
         _icon = AppIcon.CreateTrayIcon();
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("音声入力", null, (_, _) => ShowInput(paths, isolated));
+        menu.Items.Add("音声入力", null, (_, _) => _voice!.Open());
         menu.Items.Add("設定", null, (_, _) => _voice!.OpenSettings());
         if (!isolated)
             menu.Items.Add("音声認識モデル", null, (_, _) => InitialWhisperSetup.Show(paths, _voice!.Settings, _voice.StartWhisperWarmup));
@@ -138,7 +132,7 @@ public partial class App : Application
         menu.Items.Add(pause);
         menu.Items.Add("終了", null, async (_, _) => await ExitAsync());
         _tray = new Forms.NotifyIcon { Icon = _icon, Text = "EchoType", ContextMenuStrip = menu, Visible = true };
-        _tray.DoubleClick += (_, _) => ShowInput(paths, isolated);
+        _tray.DoubleClick += (_, _) => _voice!.Open();
     }
 
     private async Task RunUiSmokeAsync(VoiceInputController voice, AgentPaths paths)
@@ -166,16 +160,32 @@ public partial class App : Application
         voice.SetPaused(false);
         voice.Open();
         if (voice.IsPaused || !window.IsVisible) throw new InvalidOperationException("再開後に音声入力ウィンドウを表示できません。");
-        InitialWhisperSetup.ShowIfNeeded(paths, voice.Settings, voice.StartWhisperWarmup);
+        if (Windows.OfType<InitialWhisperSetup>().Any(setup => setup.IsVisible))
+            throw new InvalidOperationException("起動時に任意のモデル準備画面が表示されました。");
+        InitialWhisperSetup.Show(paths, voice.Settings with { Models = ["windows", "whisper-base"] }, voice.StartWhisperWarmup);
         if (!Windows.OfType<InitialWhisperSetup>().Any(setup => setup.IsVisible))
             throw new InvalidOperationException("不足しているモデルの準備画面を表示できません。");
         await InitialWhisperSetup.CloseAsync();
-        InitialWhisperSetup.ShowIfNeeded(paths, voice.Settings, voice.StartWhisperWarmup);
         if (Windows.OfType<InitialWhisperSetup>().Any(setup => setup.IsVisible))
-            throw new InvalidOperationException("一度閉じた初回案内が再表示されました。");
+            throw new InvalidOperationException("モデル準備画面を閉じられません。");
+        var localSettings = voice.Settings;
+        voice.SaveSettings(localSettings with { ExternalSpeech = new()
+        {
+            Mode = EchoType.Core.ExternalSpeechMode.Server,
+            Endpoint = "https://speech.example.test/v1/audio/transcriptions",
+            Model = "fixture-model"
+        } });
+        window.ShowProfileSettings(voice.Settings);
+        if (window.PreviewCards[0].EngineId != EchoType.Core.AsrEngines.ExternalTranscription || window.PreviewCards[0].Editable ||
+            window.PreviewCards.Skip(1).Any(card => card.EngineId.Length > 0))
+            throw new InvalidOperationException("外部認識の候補欄を表示できません。");
+        voice.SaveSettings(localSettings);
+        window.ShowProfileSettings(voice.Settings);
+        if (!window.PreviewCards.Select(card => card.EngineId).Take(localSettings.Models.Length).SequenceEqual(localSettings.Models))
+            throw new InvalidOperationException("このPCの認識へ戻した際にモデル選択が復元されません。");
         voice.Dismiss();
         if (window.IsVisible) throw new InvalidOperationException("音声入力ウィンドウを閉じられません。");
-        Console.WriteLine("音声入力と設定、ロックと一時停止、初回モデル案内と再表示の抑止を確認しました。");
+        Console.WriteLine("音声入力と設定、ロックと一時停止、任意のモデル準備、認識先の切り替えを確認しました。");
     }
 
     private async Task ExitAsync(int code = 0)

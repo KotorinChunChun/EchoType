@@ -78,6 +78,7 @@ public sealed partial class SecureStore
         var settings = value.MigrateSelections().LocalOnly();
         return settings with
         {
+            ExternalSpeech = new(),
             FormattingPrompt = settings.FormattingPrompt == VoiceInputSettings.PreviousFormattingPrompt
                 ? VoiceInputSettings.DefaultFormattingPrompt : settings.FormattingPrompt,
             Recognition = settings.Recognition with

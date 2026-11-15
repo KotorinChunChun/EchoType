@@ -69,6 +69,37 @@ public sealed class VoiceInputSettingsWindow : Window
         panel.Children.Add(liveEngine);
         var length = new CheckBox { Content = "Windowsとの文字数差を検査", IsChecked = settings.Recognition.AsrLengthCheckEnabled, Margin = new Thickness(0, 10, 0, 0) };
         panel.Children.Add(length);
+        var recognitionModes = new[]
+        {
+            new { Name = "このPCの音声認識", Mode = ExternalSpeechMode.Local },
+            new { Name = "外部サーバー（APIキーなし）", Mode = ExternalSpeechMode.Server },
+            new { Name = "外部API（APIキーあり）", Mode = ExternalSpeechMode.ApiKey }
+        };
+        var recognitionMode = new ComboBox { ItemsSource = recognitionModes, DisplayMemberPath = "Name", SelectedValuePath = "Mode",
+            SelectedValue = settings.ExternalSpeech.Mode, MinHeight = 30, ToolTip = "外部を選ぶと、録音した音声を指定の接続先へ送信します。" };
+        panel.Children.Add(new Label { Content = "音声認識先", Target = recognitionMode });
+        panel.Children.Add(recognitionMode);
+        var externalFields = new StackPanel();
+        var endpoint = new TextBox { Text = settings.ExternalSpeech.Endpoint, MaxLength = 2048, MinHeight = 30 };
+        externalFields.Children.Add(new Label { Content = "文字起こしAPIのURL（OpenAI互換）", Target = endpoint });
+        externalFields.Children.Add(endpoint);
+        var externalModel = new TextBox { Text = settings.ExternalSpeech.Model, MaxLength = 200, MinHeight = 30 };
+        externalFields.Children.Add(new Label { Content = "モデル名", Target = externalModel });
+        externalFields.Children.Add(externalModel);
+        var apiKey = new PasswordBox { Password = settings.ExternalSpeech.ApiKey, MaxLength = 4096, MinHeight = 30 };
+        var keyLabel = new Label { Content = "APIキー", Target = apiKey };
+        externalFields.Children.Add(keyLabel);
+        externalFields.Children.Add(apiKey);
+        panel.Children.Add(externalFields);
+        void UpdateRecognitionFields()
+        {
+            var mode = recognitionMode.SelectedValue is ExternalSpeechMode selected ? selected : ExternalSpeechMode.Local;
+            externalFields.Visibility = mode == ExternalSpeechMode.Local ? Visibility.Collapsed : Visibility.Visible;
+            apiKey.Visibility = keyLabel.Visibility = mode == ExternalSpeechMode.ApiKey ? Visibility.Visible : Visibility.Collapsed;
+            compute.IsEnabled = liveEngine.IsEnabled = length.IsEnabled = mode == ExternalSpeechMode.Local;
+        }
+        recognitionMode.SelectionChanged += (_, _) => UpdateRecognitionFields();
+        UpdateRecognitionFields();
         var prompt = Field("プロンプト整形プロンプト", settings.FormattingPrompt, 8000);
         prompt.Height = 160; prompt.AcceptsReturn = true; prompt.TextWrapping = TextWrapping.Wrap; prompt.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         var defaults = new Button { Content = "整形プロンプトを既定に戻す", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
@@ -88,6 +119,8 @@ public sealed class VoiceInputSettingsWindow : Window
                 controller.SaveSettings(controller.Settings with
                 {
                     Enabled = enabled.IsChecked == true, MaximumSeconds = maximum, Models = models, LiveEngine = (string)liveEngine.SelectedValue,
+                    ExternalSpeech = new() { Mode = (ExternalSpeechMode)recognitionMode.SelectedValue, Endpoint = endpoint.Text.Trim(),
+                        Model = externalModel.Text.Trim(), ApiKey = apiKey.Password },
                     TargetGap = targetGap,
                     FormattingPrompt = prompt.Text, SimpleFormattingPrompt = simple.Text,
                     RecordingShortcut = new((VoiceModifierSide)controlKey.SelectedValue, (VoiceModifierSide)shiftKey.SelectedValue,

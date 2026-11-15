@@ -86,6 +86,12 @@ public sealed partial class VoiceInputController
         entry = session.Entries.Last(item => item.RecordingNumber == entry.RecordingNumber);
         if (!entry.Finished || entry.Metadata is null || entry.RecognitionSettings is null) return;
         var engines = entry.Results.Where(r => !r.Succeeded).Select(r => r.EngineId).ToArray();
+        if (entry.RecognitionSettings.ExternalSpeech.Enabled != Settings.ExternalSpeech.Enabled ||
+            entry.RecognitionSettings.ExternalSpeech.Enabled && entry.RecognitionSettings.ExternalSpeech != Settings.ExternalSpeech)
+        {
+            Say("認識先が変わりました。現在の認識先で使う場合は録音し直してください。");
+            return;
+        }
         if (Settings.AutomaticInput) engines = engines.Where(e => e == Settings.RecognitionModels().First()).Take(1).ToArray();
         if (engines.Length == 0) { Say("失敗した認識はありません。"); return; }
         try

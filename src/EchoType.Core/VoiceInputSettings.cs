@@ -25,7 +25,8 @@ public sealed record VoiceInputSettings
     }
     public VoiceInputSettings WithShared(AppSettings shared) => this with { Recognition = Recognition with { AsrVocabulary = shared.AsrVocabulary, CodexExecutable = shared.CodexExecutable, Performance = shared.Performance, Decisions = shared.Decisions } };
     public int MaximumSeconds { get; init; } = 60;
-    public string LiveEngine { get; init; } = "whisper-turbo";
+    public string LiveEngine { get; init; } = "windows";
+    public ExternalSpeechSettings ExternalSpeech { get; init; } = new();
     public string FormattingModel { get; init; } = "gpt-6-luna";
     [System.Text.Json.Serialization.JsonIgnore]
     public string PersonalCorrections { get; init; } = "[]";
@@ -56,10 +57,11 @@ public sealed record VoiceInputSettings
         LiveEngine = AsrEngines.MigrateSelection(LiveEngine),
         Recognition = AsrEngines.MigrateSelections(Recognition)
     };
-    public string[] Models { get; init; } = ["windows", "whisper-base", "whisper-turbo", "", "", "", "", ""];
-    public string[] RecognitionModels() => (AutomaticInput ? Models.Where(m => m.Length > 0).Take(1) : Models.Where(m => m.Length > 0))
+    public string[] Models { get; init; } = ["windows", "", "", "", "", "", "", ""];
+    public string[] CandidateModels() => ExternalSpeech.Enabled ? [AsrEngines.ExternalTranscription] : Models;
+    public string[] RecognitionModels() => (AutomaticInput ? CandidateModels().Where(m => m.Length > 0).Take(1) : CandidateModels().Where(m => m.Length > 0))
         .Distinct().ToArray();
-    public string[] WhisperWarmupModels() => !Enabled ? [] : (AutomaticInput ? RecognitionModels() : Models.Take(1).Concat([LiveEngine]).Concat(Models))
+    public string[] WhisperWarmupModels() => !Enabled || ExternalSpeech.Enabled ? [] : (AutomaticInput ? RecognitionModels() : Models.Take(1).Concat([LiveEngine]).Concat(Models))
         .Where(id => !string.IsNullOrEmpty(id)).Select(AsrEngines.ModelId)
         .Where(id => id.StartsWith("whisper-", StringComparison.Ordinal) || id == "kotoba-v2").Distinct().ToArray();
     public AppSettings Recognition { get; init; } = new()
@@ -76,6 +78,7 @@ public sealed record VoiceInputSettings
         if (!double.IsFinite(WindowWidth) || !double.IsFinite(WindowHeight) || WindowWidth is < 200 or > 16000 || WindowHeight is < 150 or > 16000) throw new InvalidOperationException("保存ウィンドウサイズが不正です。");
         if (TargetGap is < 0 or > 200) throw new InvalidOperationException("入力欄との間隔は0〜200で指定してください。");
         if (MaximumSeconds is < 2 or > 300) throw new InvalidOperationException("最大録音時間は2〜300秒です。");
+        if (ExternalSpeech.Enabled) ExternalSpeech.ValidateEndpoint();
         if (!LiveEngines.Any(e => e.Id == LiveEngine)) throw new InvalidOperationException("途中認識モデルを確認してください。");
         if (AutomaticInput && RecognitionModels().FirstOrDefault() == AsrEngines.WindowsCaptions)
             throw new InvalidOperationException("Windowsライブキャプションは音源一致を保証できないため、自動入力をオフにして手動で採用してください。");

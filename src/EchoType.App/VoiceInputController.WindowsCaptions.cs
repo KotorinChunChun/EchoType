@@ -9,7 +9,8 @@ public sealed partial class VoiceInputController
     private string _voiceCaptionKey = "";
     private WindowsCaptionSnapshot? _voiceCaptionSnapshot;
     private VoiceInputCaptionPreview? _voiceCaptionPreview;
-    private bool UsesVoiceCaptions() => Settings.LiveEngine == AsrEngines.WindowsCaptions || Settings.RecognitionModels().Contains(AsrEngines.WindowsCaptions);
+    private bool UsesVoiceCaptions() => !Settings.ExternalSpeech.Enabled &&
+        (Settings.LiveEngine == AsrEngines.WindowsCaptions || Settings.RecognitionModels().Contains(AsrEngines.WindowsCaptions));
     private AppSettings VoiceCaptionSettings()
     {
         var device = ResolveDevice();

@@ -47,7 +47,7 @@ public sealed partial class VoiceInputController
                 foreach (var entry in session.Entries.OrderBy(entry => entry.RecordingNumber).Where(entry =>
                     !_automaticDraftSources.Contains(entry) &&
                     (session.Buffer.IsPending(entry.Number, engine) ||
-                     _recording is { } recording && ReferenceEquals(recording.Entry, entry) && recording.Settings.Models.Contains(engine))))
+                     _recording is { } recording && ReferenceEquals(recording.Entry, entry) && recording.Settings.CandidateModels().Contains(engine))))
                     _automaticEntries.Add((entry, engine));
         }
         RefreshState(); TryAutomaticInput();
@@ -72,7 +72,7 @@ public sealed partial class VoiceInputController
             _automaticEntries.Clear(); _automaticSession = recording.Session;
         }
         _automaticFaulted = false;
-        _automaticEntries.Add((recording.Entry, recording.Settings.Models.First(m => m.Length > 0)));
+        _automaticEntries.Add((recording.Entry, recording.Settings.RecognitionModels()[0]));
     }
     private void TryAutomaticInput()
     {

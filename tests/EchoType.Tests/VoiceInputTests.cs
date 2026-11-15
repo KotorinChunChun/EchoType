@@ -43,7 +43,7 @@ internal static class VoiceInputTests
         }));
         tests.Add(("起動時準備は音声入力用Whisperを重複せず選び無効時は行わない", () =>
         {
-            var settings = new VoiceInputSettings { Models = ["whisper-base", "windows", "qwen3-0.6b", "whisper-turbo", "kotoba-v2", ""] };
+            var settings = new VoiceInputSettings { LiveEngine = "whisper-turbo", Models = ["whisper-base", "windows", "qwen3-0.6b", "whisper-turbo", "kotoba-v2", ""] };
             if (!settings.WhisperWarmupModels().SequenceEqual(new[] { "whisper-base", "whisper-turbo", "kotoba-v2" })) throw new Exception("事前読み込み対象・優先順・重複の判定不正");
             if ((settings with { Enabled = false }).WhisperWarmupModels().Length != 0) throw new Exception("音声入力無効時に読み込み");
             if ((settings with { LiveEngine = "windows", Models = ["windows"] }).WhisperWarmupModels().Length != 0) throw new Exception("未選択のWhisperを読み込み");
@@ -124,9 +124,11 @@ internal static class VoiceInputTests
             if (store.LoadVoiceInputSettings().AutomaticInput) throw new Exception("オフが保存されない");
             return Task.CompletedTask;
         }));
-        tests.Add(("音声入力の既定3モデルと置換モードを保存", () =>
+        tests.Add(("Windows標準だけを既定にし、選択済みモデルと置換モードを保存", () =>
         {
-            if (!new VoiceInputSettings().Models.Where(m => m.Length > 0).SequenceEqual(new[] { "windows", "whisper-base", "whisper-turbo" })) throw new Exception("既定モデル不正");
+            var defaults = new VoiceInputSettings();
+            if (!defaults.RecognitionModels().SequenceEqual(new[] { "windows" }) || defaults.LiveEngine != "windows" || defaults.WhisperWarmupModels().Length != 0)
+                throw new Exception("既定モデルはWindows標準のみです。");
             using var store = new SecureStore(new AgentPaths(Path.Combine(root, "voice-replace-mode")));
             store.SaveVoiceInputSettings(new() { Models = ["windows", "qwen3-ja", "whisper-turbo", "", "", "", "", ""], ReplaceTargetText = true });
             var loaded = store.LoadVoiceInputSettings();

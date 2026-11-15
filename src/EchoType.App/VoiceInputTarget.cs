@@ -201,7 +201,13 @@ public sealed partial class VoiceInputTarget
         }
         catch (Exception ex) when (ex is InvalidOperationException or COMException) { UseDocumentEnd(); }
     }
-    public async Task<string> InsertAsync(string text, CancellationToken ct = default, bool replace = false)
+    private static readonly int[] InputGuardKeys = [0x0D, 0x10, 0x11, 0x12, 0x5B, 0x5C, 0x01];
+    private static bool InputKeysHeld(int mainKey)
+    {
+        static bool Down(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
+        return InputGuardKeys.Any(Down) || (mainKey != 0 && Down(mainKey));
+    }
+    public async Task<string> InsertAsync(string text, CancellationToken ct = default, bool replace = false, int mainKey = 0)
     {
         if ((!replace && string.IsNullOrWhiteSpace(text)) || text.Length > 16000 || text.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t')))
             throw new InvalidOperationException("入力文は1〜16000文字です。制御文字は入力できません。");
@@ -209,11 +215,9 @@ public sealed partial class VoiceInputTarget
         var initialForeground = GetForegroundWindow();
         if (replace) Validate(); else ReadCurrentSelection();
         ct.ThrowIfCancellationRequested();
-        // Ctrl+Enterからの決定では、修飾キーとEnterの解放後に入力先へ戻す。
-        int[] heldKeys = [0x0D, 0x10, 0x11, 0x12, 0x5B, 0x5C, 0x01];
-        for (var attempt = 0; attempt < 150 && heldKeys.Any(k => (GetAsyncKeyState(k) & 0x8000) != 0); attempt++) await Task.Delay(20, ct);
-        if (heldKeys.Any(k => (GetAsyncKeyState(k) & 0x8000) != 0))
-            throw new InvalidOperationException("マウスボタンと修飾キーを離してから決定してください。");
+        // 決定用のキーと録音キーを離してから入力先へ戻す。
+        for (var attempt = 0; attempt < 150 && InputKeysHeld(mainKey); attempt++) await Task.Delay(20, ct);
+        RequireInputKeysReleased();
         if (GetForegroundWindow() != initialForeground) { LogFocus("blocked-activation"); throw new InvalidOperationException("入力の準備中に前面が変わったため停止しました。"); }
         LogFocus("activate-root");
         ShowWindow(_window, 9);
@@ -227,18 +231,20 @@ public sealed partial class VoiceInputTarget
             Validate(); ct.ThrowIfCancellationRequested();
             if (_emEditor.ReadSelection(_original.Length) != (start, end))
                 throw new InvalidOperationException("EmEditorの文字位置を復元できなかったため入力しませんでした。");
+            RequireInputKeysReleased();
             if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("二重送信を停止しました。");
             RequireInputForeground(); _emEditor.ReplaceSelection(text);
-            return await VerifyAsync(replace ? text : _prefix + text + _suffix, replace ? text : _prefix + text);
+            return await VerifyAsync(replace ? text : _prefix + text + _suffix, replace ? text : _prefix + text, mainKey);
         }
         if (replace && _value is { Current.IsReadOnly: false } || _pattern is null || _range is null)
         {
             if (_value is not { Current.IsReadOnly: false }) throw new InvalidOperationException("本文を書き込める入力欄を取得できません。");
             FocusForInput();
             Validate(); ct.ThrowIfCancellationRequested();
+            RequireInputKeysReleased();
             if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("二重送信を停止しました。");
             RequireInputForeground(); _value.SetValue(replace ? text : _original + text);
-            return await VerifyAsync(replace ? text : _original + text, replace ? text : _original + text);
+            return await VerifyAsync(replace ? text : _original + text, replace ? text : _original + text, mainKey);
         }
         FocusForInput();
         Validate(); // フォーカス取得で再描画される編集欄も、選択範囲を使う前に取り直す。
@@ -250,7 +256,7 @@ public sealed partial class VoiceInputTarget
         if (GetForegroundWindow() != _window || !Automation.Compare(_element, AutomationElement.FocusedElement) ||
             selected.Length != 1 || !selected[0].Compare(insertion))
             throw new InvalidOperationException("入力先のフォーカス・文字位置を復元できなかったため入力しませんでした。");
-        ct.ThrowIfCancellationRequested();
+        RequireInputKeysReleased();
         if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("二重送信を停止しました。");
         // Unicode文字として一括送信する。Enterキーやアプリの送信操作は実行しない。
         var inputs = text.Length == 0 && replace ? new[] { Input.KeyPress(0x08, false), Input.KeyPress(0x08, true) }
@@ -258,10 +264,16 @@ public sealed partial class VoiceInputTarget
         RequireInputForeground();
         if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) != inputs.Length)
             return "入力結果を確認できません。自動再送はしません。対象の本文を確認してください。";
-        return await VerifyAsync(replace ? text : _prefix + text + _suffix, replace ? text : _prefix + text);
+        return await VerifyAsync(replace ? text : _prefix + text + _suffix, replace ? text : _prefix + text, mainKey);
+
+        void RequireInputKeysReleased()
+        {
+            ct.ThrowIfCancellationRequested();
+            if (InputKeysHeld(mainKey)) throw new InvalidOperationException("録音キーとマウスボタンを離してから決定してください。");
+        }
     }
     private static string Normalize(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
-    public async Task<VoiceInputTarget> UndoAsync(CancellationToken ct = default)
+    public async Task<VoiceInputTarget> UndoAsync(CancellationToken ct = default, int mainKey = 0)
     {
         if (!WriteVerified || VerifiedText is null || DateTimeOffset.UtcNow - _verifiedAt > TimeSpan.FromMinutes(2) || _original.Length > 16000)
             throw new InvalidOperationException("取り消せるのは、2分以内の確認済み入力（元の本文16000文字以内）です。");
@@ -278,7 +290,7 @@ public sealed partial class VoiceInputTarget
         ct.ThrowIfCancellationRequested();
         if (Interlocked.CompareExchange(ref _undoStarted, 1, 0) != 0) throw new InvalidOperationException("取り消しは実行済みです。");
         string result;
-        try { result = await target.InsertAsync(_original, ct, replace: true); }
+        try { result = await target.InsertAsync(_original, ct, replace: true, mainKey: mainKey); }
         catch { if (!target.Consumed) Interlocked.Exchange(ref _undoStarted, 0); throw; }
         if (!target.WriteVerified) throw new InvalidOperationException(result);
         return target.RefreshSnapshot();

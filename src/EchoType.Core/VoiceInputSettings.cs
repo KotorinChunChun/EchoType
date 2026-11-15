@@ -12,7 +12,10 @@ public sealed record VoiceInputSettings
     public double WindowWidth { get; init; } = 1080;
     public double WindowHeight { get; init; } = 850;
     public int TargetGap { get; init; } = 32;
-    public int[] TriggerKeys { get; init; } = [0x5B, 0xA2, 0xA0];
+    public int[] TriggerKeys { get; init; } = [0xA2, 0xA0];
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public VoiceRecordingShortcut? RecordingShortcut { get; init; }
+    public VoiceRecordingShortcut GetRecordingShortcut() => RecordingShortcut ?? VoiceRecordingShortcut.FromModifiers(TriggerKeys);
     public static (int Key, string Name)[] ModifierKeys => [(0xA2, "左Ctrl"), (0xA3, "右Ctrl"), (0xA0, "左Shift"), (0xA1, "右Shift"), (0xA4, "左Alt"), (0xA5, "右Alt"), (0x5B, "左Windows"), (0x5C, "右Windows")];
     public string[] SentenceEndings { get; init; } = ["です", "ます", "ください", "ですか", "ますか", "でした", "ました", "ません", "ませんか", "ましょう", "でしょう", "でしょうか", "くださいね", "くださいませ", "お願いします", "ありがとう", "ありがとうございます", "了解しました", "承知しました", "必要です", "ほしい", "ほしいです", "だと思います", "なのです", "なのだ", "である", "だった", "しました", "できます", "できますか", "できません", "したい", "したいです", "してほしい", "してください", "してくださいませんか"];
     public string CompleteCandidate(string text)
@@ -66,7 +69,9 @@ public sealed record VoiceInputSettings
     };
     public void Validate()
     {
-        if (TriggerKeys is null || TriggerKeys.Length == 0 || TriggerKeys.Distinct().Count() != TriggerKeys.Length || TriggerKeys.Any(k => !ModifierKeys.Any(m => m.Key == k))) throw new InvalidOperationException("録音に使う修飾キーを1個以上選択してください。");
+        if (RecordingShortcut is null && (TriggerKeys is null || TriggerKeys.Length == 0 || TriggerKeys.Distinct().Count() != TriggerKeys.Length || TriggerKeys.Any(k => !ModifierKeys.Any(m => m.Key == k))))
+            throw new InvalidOperationException("録音に使う修飾キーを1個以上選択してください。");
+        GetRecordingShortcut().Validate();
         if (SentenceEndings is null || SentenceEndings.Length > 200 || SentenceEndings.Any(s => string.IsNullOrWhiteSpace(s) || s.Length > 80 || s.Any(char.IsControl))) throw new InvalidOperationException("終了文字列は200件以内、各1〜80文字で指定してください。");
         if (!double.IsFinite(WindowWidth) || !double.IsFinite(WindowHeight) || WindowWidth is < 200 or > 16000 || WindowHeight is < 150 or > 16000) throw new InvalidOperationException("保存ウィンドウサイズが不正です。");
         if (TargetGap is < 0 or > 200) throw new InvalidOperationException("入力欄との間隔は0〜200で指定してください。");

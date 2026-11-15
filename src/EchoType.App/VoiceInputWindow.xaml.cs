@@ -24,7 +24,7 @@ public partial class VoiceInputWindow : Window
         InitializeComponent(); _controller = controller;
         UnsentDrafts.ItemsSource = controller.UnsentDraftHistory;
         InitializePlacement(settings);
-        StatusText.Text = string.Join("＋", VoiceInputSettings.ModifierKeys.Where(k => settings.TriggerKeys.Contains(k.Key)).Select(k => k.Name)) + "を1秒以上押したまま話し、離すと文字起こしします。";
+        StatusText.Text = settings.GetRecordingShortcut().Label() + "を1秒以上押したまま話し、離すと文字起こしします。";
         CapturePanel.IsExpanded = settings.CapturePanelExpanded;
         ShowAutomaticSettings(settings);
         ReadCurrentText.IsChecked = settings.ReplaceTargetText;

@@ -91,13 +91,26 @@ public sealed partial class VoiceInputController
         _meterTimer.Tick += (_, _) => UpdateMeter();
         if (monitor)
         {
-            _keyboard = new(keyState, Settings.TriggerKeys);
-            _keyboard.Changed += (change, stamp) => _dispatcher.BeginInvoke(() => OnGesture(change, stamp));
+            _keyboard = new(Settings.GetRecordingShortcut(), keyState);
+            _keyboard.Changed += (change, stamp) =>
+            {
+                var generation = Volatile.Read(ref _pauseGeneration);
+                _dispatcher.BeginInvoke(() =>
+                {
+                    if (generation == _pauseGeneration) OnGesture(change, stamp);
+                });
+            };
             _keyboard.EscapePressed += () =>
             {
                 // 本体・設定画面にフォーカスがあるときはWPF側で処理し、二重に閉じない。
                 if (!VoiceInputTarget.ExternalForeground) return;
-                _dispatcher.BeginInvoke(() => { if (_window?.SettingsOpen == true) _window.CloseSettings(); else if (_window?.IsVisible == true || _capture is not null || _busy) Dismiss(); });
+                var generation = Volatile.Read(ref _pauseGeneration);
+                _dispatcher.BeginInvoke(() =>
+                {
+                    if (generation != _pauseGeneration || _paused || _sessionLocked || _stopping) return;
+                    if (_window?.SettingsOpen == true) _window.CloseSettings();
+                    else if (_window?.IsVisible == true || _capture is not null || _busy) Dismiss();
+                });
             };
             _targetTimer.Tick += (_, _) => { if (!ConfigurationLocked) TrackTarget(); };
             _targetTimer.Start(); TrackTarget();
@@ -114,7 +127,7 @@ public sealed partial class VoiceInputController
     }
     private void TrackTarget()
     {
-        if (_stopping || _sessionLocked || !_monitorTargets) return;
+        if (_stopping || _sessionLocked || _paused || !_monitorTargets) return;
         // 監視中はUIA・本文・選択範囲に触れない。外部プロバイダーへの遅延要求を残さない。
         var stamp = _readTargetFocus();
         if (stamp.Window == 0) return;
@@ -159,7 +172,7 @@ public sealed partial class VoiceInputController
     private bool Current(VoiceInputSession session) => !_stopping && !session.Closed && ReferenceEquals(_session, session);
     public void Open()
     {
-        if (_stopping || _sessionLocked) return;
+        if (_stopping || _sessionLocked || _paused) return;
         if (_capture is null) SelectApplication((_target ?? _lastExternal)?.ApplicationPath ?? "");
         TrackTarget();
         var session = EnsureSession();
@@ -190,14 +203,15 @@ public sealed partial class VoiceInputController
     public void SaveSettings(VoiceInputSettings settings)
     {
         if (ConfigurationLocked) throw new InvalidOperationException("録音・認識の終了後に設定を保存してください。");
-        var keysChanged = !settings.TriggerKeys.SequenceEqual(Settings.TriggerKeys);
+        var shortcut = settings.GetRecordingShortcut();
+        var keysChanged = shortcut != Settings.GetRecordingShortcut();
         var previous = Settings.Recognition;
         PersistSettings(settings);
         var saved = settings.Recognition with { Performance = _store.LoadSettings().Performance };
         var logged = EngineSettingsJournal.Change(_paths, "saved", previous, saved, _liveAsr.EffectiveSettings(saved), voice: true);
         Status?.Invoke((EngineRestartNotice.Length > 0 ? EngineRestartNotice : "音声入力の設定を保存しました。") + (logged ? "" : "診断ログを保存できません。"));
         UpdateVoiceCaptions();
-        if (keysChanged) _keyboard?.Configure(settings.TriggerKeys);
+        if (keysChanged) _keyboard?.Configure(shortcut);
     }
     public void SelectDevice(InputDevice device)
     {
@@ -212,7 +226,7 @@ public sealed partial class VoiceInputController
     public void VisibilityChanged()
     {
         UpdateVoiceCaptions();
-        if (_stopping || _noAudio || _window?.IsVisible != true) { StopMonitor(); return; }
+        if (_stopping || _paused || _noAudio || _window?.IsVisible != true) { StopMonitor(); return; }
         if (_capture is not null || _inputMonitor is not null) return;
         try
         {
@@ -246,7 +260,7 @@ public sealed partial class VoiceInputController
     }
     private void OnGesture(VoiceInputGesture.Change change, VoiceInputTarget.FocusStamp stamp)
     {
-        if (_stopping || _sessionLocked) return;
+        if (_stopping || _sessionLocked || _paused) return;
         if (change == VoiceInputGesture.Change.Started) BeginRecording(stamp);
         else if (_capture is not null) ReleaseRecording(change == VoiceInputGesture.Change.Accepted);
     }

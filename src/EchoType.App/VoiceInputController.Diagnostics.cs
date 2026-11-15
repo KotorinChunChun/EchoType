@@ -39,7 +39,8 @@ public sealed partial class VoiceInputController
         ConfigureFocusLog(target, reason);
         try
         {
-            outcome = await Task.Run(() => target.InsertAsync(text, ct, replace));
+            var mainKey = Settings.GetRecordingShortcut().MainKey;
+            outcome = await Task.Run(() => target.InsertAsync(text, ct, replace, mainKey));
             if (target.WriteVerified) _undoTarget = target;
             return outcome;
         }
@@ -62,7 +63,8 @@ public sealed partial class VoiceInputController
         try
         {
             ConfigureFocusLog(previous, "explicit-undo");
-            var target = await Task.Run(() => previous.UndoAsync()); _undoTarget = null;
+            var mainKey = Settings.GetRecordingShortcut().MainKey;
+            var target = await Task.Run(() => previous.UndoAsync(mainKey: mainKey)); _undoTarget = null;
             ++_targetLoadVersion; ++_targetCaptureVersion;
             _target = target; _lastExternal = target;
             if (edit)

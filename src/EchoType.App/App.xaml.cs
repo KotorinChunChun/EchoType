@@ -25,9 +25,10 @@ public partial class App : Application
         try
         {
             var options = Parse(e.Args);
+            var background = options.ContainsKey("--startup");
             if (smoke && !options.ContainsKey("--data-root"))
                 throw new ArgumentException("画面試験には --data-root が必要です。");
-            if (migrate && (smoke || options.ContainsKey("--open") || options.ContainsKey("--model-root")))
+            if (migrate && (smoke || background || options.ContainsKey("--open") || options.ContainsKey("--model-root")))
                 throw new ArgumentException("移行は単独で実行してください。");
             var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.GetValueOrDefault("--data-root") ?? AgentPaths.DefaultRoot));
             if (smoke && string.Equals(root, AgentPaths.DefaultRoot, StringComparison.OrdinalIgnoreCase))
@@ -65,7 +66,7 @@ public partial class App : Application
             CreateTray();
             SystemEvents.SessionSwitch += SessionSwitch;
             _voice.StartWhisperWarmup();
-            if (options.ContainsKey("--open")) _voice.Open();
+            if (!background) _voice.Open();
         }
         catch (Exception ex)
         {
@@ -89,7 +90,7 @@ public partial class App : Application
             var name = args[i];
             var value = name switch
             {
-                "--open" or "--migrate-desktop-agent" or "--smoke-ui" => null,
+                "--open" or "--startup" or "--migrate-desktop-agent" or "--smoke-ui" => null,
                 "--data-root" or "--source-root" or "--model-root" when i + 1 < args.Length && !args[i + 1].StartsWith("--") => args[++i],
                 _ => throw new ArgumentException("起動オプションを確認してください。")
             };
@@ -106,6 +107,14 @@ public partial class App : Application
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("音声入力", null, (_, _) => _voice!.Open());
         menu.Items.Add("設定", null, (_, _) => _voice!.OpenSettings());
+        var pause = new Forms.ToolStripMenuItem("一時停止");
+        pause.Click += (_, _) =>
+        {
+            _voice!.SetPaused(!_voice.IsPaused);
+            pause.Text = _voice.IsPaused ? "再開" : "一時停止";
+            _tray!.Text = _voice.IsPaused ? "EchoType（一時停止中）" : "EchoType";
+        };
+        menu.Items.Add(pause);
         menu.Items.Add("終了", null, async (_, _) => await ExitAsync());
         _tray = new Forms.NotifyIcon { Icon = _icon, Text = "EchoType", ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => _voice!.Open();
@@ -130,9 +139,15 @@ public partial class App : Application
         voice.SetSessionLocked(false);
         voice.Open();
         if (!window.IsVisible) throw new InvalidOperationException("ロック解除後に音声入力ウィンドウを表示できません。");
+        voice.SetPaused(true);
+        voice.Open();
+        if (!voice.IsPaused || window.IsVisible) throw new InvalidOperationException("一時停止中に音声入力ウィンドウが表示されました。");
+        voice.SetPaused(false);
+        voice.Open();
+        if (voice.IsPaused || !window.IsVisible) throw new InvalidOperationException("再開後に音声入力ウィンドウを表示できません。");
         voice.Dismiss();
         if (window.IsVisible) throw new InvalidOperationException("音声入力ウィンドウを閉じられません。");
-        Console.WriteLine("音声入力と設定の表示・終了、ロック中の取消しと解除後の再表示を確認しました。");
+        Console.WriteLine("音声入力と設定の表示・終了、ロックと一時停止からの再表示を確認しました。");
     }
 
     private async Task ExitAsync(int code = 0)

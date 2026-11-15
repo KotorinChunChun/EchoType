@@ -16,12 +16,14 @@ internal static class VoiceInputTests
             if (loaded.LiveEngine != "windows-ai-speech" || loaded.LocalOnly().Models.Single() != "windows-ai-speech" || VoiceInputSettings.LiveEngines.Single(e => e.Id == loaded.LiveEngine).Name != "Win AI Speech") throw new Exception("Windows AIの専用入力設定が失われました。");
             return Task.CompletedTask;
         }));
-        tests.Add(("全文認識と左3修飾キーの初期値・既存選択の保持", () =>
+        tests.Add(("全文認識と左Ctrl＋左Shiftの初期値・既存選択の保持", () =>
         {
             var settings = new AppSettings(); var voice = new VoiceInputSettings();
-            if (settings.PrimaryAsrEngine != "nemotron-3.5" || !voice.TriggerKeys.SequenceEqual(new[] { 0x5B, 0xA2, 0xA0 })) throw new Exception("初期値が不正");
-            var existing = System.Text.Json.JsonSerializer.Deserialize<VoiceInputSettings>("{\"TriggerKeys\":[162,160]}")!;
-            if (!existing.TriggerKeys.SequenceEqual(new[] { 0xA2, 0xA0 })) throw new Exception("保存済みキーを変更");
+            if (settings.PrimaryAsrEngine != "nemotron-3.5" || voice.GetRecordingShortcut() != new VoiceRecordingShortcut(VoiceModifierSide.Left, VoiceModifierSide.Left))
+                throw new Exception("初期値が不正");
+            var existing = System.Text.Json.JsonSerializer.Deserialize<VoiceInputSettings>("{\"TriggerKeys\":[91,162,160]}")!;
+            if (existing.GetRecordingShortcut() != new VoiceRecordingShortcut(VoiceModifierSide.Left, VoiceModifierSide.Left, Windows: VoiceModifierSide.Left))
+                throw new Exception("保存済みキーを変更");
             return Task.CompletedTask;
         }));
         tests.Add(("ヒントと同一の実文字・末尾改行を表示位置で区別し不明時は保持する", () =>
@@ -183,7 +185,7 @@ internal static class VoiceInputTests
         {
             foreach (var modifier in VoiceInputSettings.ModifierKeys)
             {
-                var g = new VoiceModifierGesture(); g.Configure([modifier.Key]); var keys = new HashSet<int>();
+                var g = new VoiceModifierGesture(); g.Configure(VoiceRecordingShortcut.FromModifiers([modifier.Key])); var keys = new HashSet<int>();
                 g.Update(keys.Contains, 0); keys.Add(modifier.Key);
                 if (g.Update(keys.Contains, 1) != VoiceInputGesture.Change.Started) throw new Exception("キー開始不正");
                 keys.Clear(); if (g.Update(keys.Contains, 1001) != VoiceInputGesture.Change.Accepted) throw new Exception("キー確定不正");
@@ -194,6 +196,46 @@ internal static class VoiceInputTests
             try { settings.Validate(); } catch (InvalidOperationException) { rejected = true; }
             if (!rejected) throw new Exception("キーなしで保存可能");
             return Task.CompletedTask;
+        }));
+        tests.Add(("録音の主キー・左右条件の保存と再アームを確認", () =>
+        {
+            var shortcut = new VoiceRecordingShortcut(VoiceModifierSide.Either, VoiceModifierSide.None, VoiceModifierSide.Both, MainKey: 0x87);
+            var gesture = new VoiceModifierGesture(); gesture.Configure(shortcut);
+            var keys = new HashSet<int>();
+            VoiceInputGesture.Change Update(long ms, params int[] pressed)
+            {
+                keys.Clear(); keys.UnionWith(pressed);
+                return gesture.Update(keys.Contains, ms);
+            }
+            if (Update(0) != VoiceInputGesture.Change.None || Update(10, 0xA3, 0xA4, 0x87) != VoiceInputGesture.Change.None ||
+                Update(20, 0xA3, 0xA4, 0xA5, 0x87) != VoiceInputGesture.Change.Started ||
+                Update(1019, 0x87) != VoiceInputGesture.Change.Discarded ||
+                Update(1020, 0xA2, 0xA4, 0xA5, 0x87) != VoiceInputGesture.Change.None)
+                throw new Exception("左右条件または短押し後の再アーム不正");
+            Update(1030);
+            if (Update(1100, 0xA2, 0xA3, 0xA4, 0xA5, 0x87) != VoiceInputGesture.Change.Started ||
+                Update(2100, 0xA5, 0x87) != VoiceInputGesture.Change.Accepted ||
+                Update(2110, 0xA2, 0xA4, 0xA5, 0x87) != VoiceInputGesture.Change.None)
+                throw new Exception("1秒境界または確定後の再アーム不正");
+            Update(2120);
+            if (Update(2200, 0xA2, 0xA4, 0xA5, 0x87) != VoiceInputGesture.Change.Started ||
+                Update(3300, 0xA2, 0xA4, 0xA5, 0x87, 'K') != VoiceInputGesture.Change.Discarded)
+                throw new Exception("指定外の主キーを採用");
+
+            var mainOnly = new VoiceRecordingShortcut(VoiceModifierSide.None, VoiceModifierSide.None, MainKey: 'Z');
+            gesture.Configure(mainOnly);
+            Update(3400);
+            if (Update(3410, 'Z') != VoiceInputGesture.Change.Started || Update(4410) != VoiceInputGesture.Change.Accepted)
+                throw new Exception("主キー単独を設定できない");
+
+            using var store = new SecureStore(new AgentPaths(Path.Combine(root, "voice-recording-shortcut")));
+            store.SaveVoiceInputSettings(new() { TriggerKeys = [0xA2, 0xA3], RecordingShortcut = shortcut });
+            if (store.LoadVoiceInputSettings().GetRecordingShortcut() != shortcut ||
+                VoiceRecordingShortcut.FromModifiers([0xA2, 0xA3]).Control != VoiceModifierSide.Both)
+                throw new Exception("新形式の保存または旧左右同時指定の互換性が不正");
+            try { (new VoiceInputSettings { RecordingShortcut = mainOnly with { MainKey = 0x1B } }).Validate(); }
+            catch (InvalidOperationException) { return Task.CompletedTask; }
+            throw new Exception("不正な主キーを設定できた");
         }));
         tests.Add(("候補末尾の句点ルールは編集可能で共有語彙とCLIは本体設定を使う", () =>
         {

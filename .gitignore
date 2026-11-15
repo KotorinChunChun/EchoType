@@ -4,6 +4,8 @@
 /release/
 /dev/temp/
 /dev/private/
+/dev/history/*/logs/
+*.log
 .env
 *.sqlite*
 *.dpapi

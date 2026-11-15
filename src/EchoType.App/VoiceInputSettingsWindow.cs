@@ -15,7 +15,7 @@ public sealed class VoiceInputSettingsWindow : Window
         var footer = new StackPanel { Margin = new Thickness(20, 6, 20, 10) }; DockPanel.SetDock(footer, Dock.Bottom); layout.Children.Add(footer);
         layout.Children.Add(new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { e.Handled = true; Close(); } };
-        var enabled = new CheckBox { Content = "選択した修飾キーの長押しで録音する", IsChecked = settings.Enabled };
+        var enabled = new CheckBox { Content = "録音キーを有効にする", IsChecked = settings.Enabled };
         panel.Children.Add(enabled);
         var personalize = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) }; panel.Children.Add(personalize);
         var profile = new Button { Content = "アプリ別設定", Margin = new Thickness(0, 0, 8, 0) };
@@ -25,8 +25,29 @@ public sealed class VoiceInputSettingsWindow : Window
         personalize.Children.Add(profile); personalize.Children.Add(dictionary);
         Title = "音声入力の設定 — " + controller.ProfileName;
         var keysPanel = new WrapPanel(); panel.Children.Add(keysPanel);
-        var keyChecks = VoiceInputSettings.ModifierKeys.Select(m => new CheckBox { Content = m.Name, Tag = m.Key, IsChecked = settings.TriggerKeys.Contains(m.Key), Margin = new Thickness(0, 4, 12, 4) }).ToArray();
-        foreach (var check in keyChecks) keysPanel.Children.Add(check);
+        var shortcut = settings.GetRecordingShortcut();
+        var sideChoices = new[]
+        {
+            new { Label = "不要", Value = VoiceModifierSide.None }, new { Label = "左", Value = VoiceModifierSide.Left },
+            new { Label = "右", Value = VoiceModifierSide.Right }, new { Label = "左右どちらか", Value = VoiceModifierSide.Either },
+            new { Label = "左右両方", Value = VoiceModifierSide.Both }
+        };
+        ComboBox KeyField(string label, System.Collections.IEnumerable choices, object selection)
+        {
+            var field = new StackPanel { Margin = new Thickness(0, 4, 12, 4) };
+            var combo = new ComboBox { ItemsSource = choices, DisplayMemberPath = "Label", SelectedValuePath = "Value", SelectedValue = selection, MinWidth = 90 };
+            field.Children.Add(new Label { Content = label, Target = combo });
+            field.Children.Add(combo);
+            keysPanel.Children.Add(field);
+            return combo;
+        }
+        var controlKey = KeyField("Ctrl", sideChoices, shortcut.Control);
+        var shiftKey = KeyField("Shift", sideChoices, shortcut.Shift);
+        var altKey = KeyField("Alt", sideChoices, shortcut.Alt);
+        var windowsKey = KeyField("Windows", sideChoices, shortcut.Windows);
+        var mainKeyChoices = Enumerable.Range('A', 26).Concat(Enumerable.Range(0x70, 24)).Prepend(0)
+            .Select(key => new { Label = VoiceRecordingShortcut.MainKeyName(key), Value = key }).ToArray();
+        var mainKey = KeyField("主キー", mainKeyChoices, shortcut.MainKey);
         TextBox Field(string label, string value, int max = 0)
         {
             panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 12, 0, 4) });
@@ -69,7 +90,8 @@ public sealed class VoiceInputSettingsWindow : Window
                     Enabled = enabled.IsChecked == true, MaximumSeconds = maximum, Models = models, LiveEngine = (string)liveEngine.SelectedValue,
                     TargetGap = targetGap,
                     FormattingPrompt = prompt.Text, SimpleFormattingPrompt = simple.Text,
-                    TriggerKeys = keyChecks.Where(c => c.IsChecked == true).Select(c => (int)c.Tag).ToArray(),
+                    RecordingShortcut = new((VoiceModifierSide)controlKey.SelectedValue, (VoiceModifierSide)shiftKey.SelectedValue,
+                        (VoiceModifierSide)altKey.SelectedValue, (VoiceModifierSide)windowsKey.SelectedValue, (int)mainKey.SelectedValue),
                     SentenceEndings = endings.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct().ToArray(),
                     Recognition = controller.Settings.Recognition with
                     {

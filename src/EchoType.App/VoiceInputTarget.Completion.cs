@@ -6,7 +6,7 @@ namespace EchoType.App;
 
 public sealed partial class VoiceInputTarget
 {
-    private async Task<string> VerifyAsync(string expectedText, string caretPrefix)
+    private async Task<string> VerifyAsync(string expectedText, string caretPrefix, int mainKey)
     {
         var expected = Normalize(expectedText);
         for (var i = 0; i < 30; i++)
@@ -26,7 +26,7 @@ public sealed partial class VoiceInputTarget
                 // 書き込み対象そのもののValueが完全一致する場合は確認できる。空白は削らない。
                 if (Normalize(actual) != expected && (_value is null || Normalize(_value.Current.Value) != expected)) continue;
                 WriteVerified = true; VerifiedText = actual; _verifiedAt = DateTimeOffset.UtcNow;
-                try { CaretPlaced = await MoveCaretAsync(caretPrefix, actual); }
+                try { CaretPlaced = await MoveCaretAsync(caretPrefix, actual, mainKey); }
                 catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or COMException) { CaretPlaced = false; }
                 return CaretPlaced ? "保持した位置への入力を確認しました。"
                     : "本文の入力を確認しました。カーソル位置は移動できませんでした。";
@@ -36,7 +36,7 @@ public sealed partial class VoiceInputTarget
         return "文字を送信しましたが結果の一致を確認できません。自動再送はしません。対象の本文を確認してください。";
     }
 
-    private async Task<bool> MoveCaretAsync(string prefix, string actual)
+    private async Task<bool> MoveCaretAsync(string prefix, string actual, int mainKey)
     {
         if (GetForegroundWindow() != _window) return false;
         if (_emEditor is not null)
@@ -73,8 +73,7 @@ public sealed partial class VoiceInputTarget
         }
         if (Normalize(actual) != normalizedPrefix) return false;
         // ValuePatternだけの欄は全文置換・末尾追記のみ。対象フォーカスを照合してCtrl+End。
-        if (!Automation.Compare(_element, AutomationElement.FocusedElement) ||
-            new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C, 0x0D, 0x01 }.Any(k => (GetAsyncKeyState(k) & 0x8000) != 0)) return false;
+        if (!Automation.Compare(_element, AutomationElement.FocusedElement) || InputKeysHeld(mainKey)) return false;
         var inputs = new[] { Input.KeyPress(0x11, false), Input.KeyPress(0x23, false), Input.KeyPress(0x23, true), Input.KeyPress(0x11, true) };
         RequireInputForeground();
         var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());

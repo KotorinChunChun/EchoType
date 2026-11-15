@@ -25,7 +25,7 @@ $test = '.\tests\EchoType.Tests\bin\Debug\net10.0-windows\EchoType.Tests.exe'
 & $test --isolated queue
 & $test --isolated focus
 # 操作中の作業がないWindowsの対話デスクトップで実行する
-& $test --focus-interactive
+& $test --confirm-interactive
 ```
 
 ## 保存先とモデル

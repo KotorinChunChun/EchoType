@@ -544,6 +544,11 @@ public sealed partial class VoiceInputController
         if (_target is null) { Say("ターゲットをドラッグして入力先を指定してください。"); return; }
         if (ReplaceRequested && !ReplacementReady) { Say("入力先の本文を取得してから決定してください。"); return; }
         var target = _target; var text = _window.DraftText;
+        if (!target.CanReturnFocus)
+        {
+            Say("別のアプリへ移動したため入力を停止しました。入力先を確認して決定してください。");
+            return;
+        }
         var session = EnsureSession();
         var replace = ReplaceRequested;
         SetBusy(true); var operation = new CancellationTokenSource(); _operation = operation; _work = SendAsync(); await _work;
@@ -551,7 +556,6 @@ public sealed partial class VoiceInputController
         {
             try
             {
-                await Task.Run(target.Validate); operation.Token.ThrowIfCancellationRequested();
                 var result = await InsertMeasuredAsync(target, text, replace, operation.Token);
                 if (!Current(session)) return;
                 Say(result);

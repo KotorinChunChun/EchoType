@@ -65,9 +65,10 @@ public sealed partial class VoiceInputTarget
         public uint ThreadId { get; init; }
     }
     internal static nint ForegroundWindow => GetForegroundWindow();
-    internal static bool IsOwnOrExpectedForeground(nint expected)
+    internal static bool IsOwnOrExpectedForeground(nint expected) => IsOwnOrExpectedWindow(GetForegroundWindow(), expected);
+    private static bool IsOwnOrExpectedWindow(nint current, nint expected)
     {
-        var current = GetForegroundWindow(); GetWindowThreadProcessId(current, out var pid);
+        GetWindowThreadProcessId(current, out var pid);
         return current != 0 && (current == expected || pid == Environment.ProcessId);
     }
     [StructLayout(LayoutKind.Sequential)] public record struct NativeRect(int Left, int Top, int Right, int Bottom);
@@ -212,14 +213,24 @@ public sealed partial class VoiceInputTarget
     {
         if ((!replace && string.IsNullOrWhiteSpace(text)) || text.Length > 16000 || text.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t')))
             throw new InvalidOperationException("入力文は1〜16000文字です。制御文字は入力できません。");
-        if (!CanReturnFocus) { LogFocus("blocked-before-input"); throw new InvalidOperationException("別のアプリへ移動したため入力を停止しました。"); }
         var initialForeground = GetForegroundWindow();
+        if (!IsOwnOrExpectedWindow(initialForeground, _window))
+        {
+            LogFocus("blocked-before-input");
+            throw new InvalidOperationException("別のアプリへ移動したため入力を停止しました。");
+        }
         if (replace || _preservePoint) Validate(); else ReadCurrentSelection();
         ct.ThrowIfCancellationRequested();
         // 決定用のキーと録音キーを離してから入力先へ戻す。
         for (var attempt = 0; attempt < 150 && InputKeysHeld(mainKey); attempt++) await Task.Delay(20, ct);
         RequireInputKeysReleased();
-        if (GetForegroundWindow() != initialForeground) { LogFocus("blocked-activation"); throw new InvalidOperationException("入力の準備中に前面が変わったため停止しました。"); }
+        // UI Automationの再取得中に指定先自身が前面に戻る場合がある。第三の窓への移動は中止する。
+        var foreground = GetForegroundWindow();
+        if (foreground != initialForeground && foreground != _window)
+        {
+            LogFocus("blocked-activation");
+            throw new InvalidOperationException("入力の準備中に前面が変わったため停止しました。");
+        }
         LogFocus("activate-root");
         ShowWindow(_window, 9);
         if (GetForegroundWindow() != _window && !SetForegroundWindow(_window)) throw new InvalidOperationException("入力先を前面に戻せません。入力先を表示してから決定してください。");

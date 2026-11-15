@@ -7,7 +7,7 @@ using System.Windows;
 
 internal static class VoiceInputMonitorDiagnostics
 {
-    internal static int Run(int seconds, bool interactive = false)
+    internal static int Run(int seconds, bool interactive = false, bool confirmOnly = false)
     {
         var result = 1;
         var thread = new Thread(() =>
@@ -17,7 +17,12 @@ internal static class VoiceInputMonitorDiagnostics
             app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri($"/{appAssembly};component/AppStyles.xaml", UriKind.Relative) });
             app.Dispatcher.BeginInvoke(async () =>
             {
-                try { await VoiceInputNativeFocusDiagnostics.VerifyAsync(app, seconds, interactive); await VerifyAsync(app); result = 0; }
+                try
+                {
+                    await VoiceInputNativeFocusDiagnostics.VerifyAsync(app, seconds, interactive, confirmOnly);
+                    if (!confirmOnly) await VerifyAsync(app);
+                    result = 0;
+                }
                 catch (Exception ex) { Console.Error.WriteLine(ex); }
                 finally { app.Shutdown(); }
             });

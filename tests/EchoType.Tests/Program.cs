@@ -6,6 +6,7 @@ if (args is ["--isolated-app-legacy-settings", var legacyApp]) return IsolatedDe
 if (args is ["--queue-child"]) return VoiceInputQueueDiagnostics.Run();
 if (args is ["--focus-child"]) return VoiceInputMonitorDiagnostics.Run(20);
 if (args is ["--focus-interactive"]) return VoiceInputMonitorDiagnostics.Run(1, interactive: true);
+if (args is ["--confirm-interactive"]) return VoiceInputMonitorDiagnostics.Run(0, interactive: true, confirmOnly: true);
 if (args is ["--speech-loopback", var endpoint]) return await ExternalSpeechTests.LoopbackAsync(endpoint);
 if (args.Length != 0) return 2;
 

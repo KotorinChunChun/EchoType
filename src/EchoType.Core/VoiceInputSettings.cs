@@ -85,7 +85,8 @@ public sealed record VoiceInputSettings
         if (!double.IsFinite(WindowWidth) || !double.IsFinite(WindowHeight) || WindowWidth is < 200 or > 16000 || WindowHeight is < 150 or > 16000) throw new InvalidOperationException("保存ウィンドウサイズが不正です。");
         if (TargetGap is < 0 or > 200) throw new InvalidOperationException("入力欄との間隔は0〜200で指定してください。");
         if (MaximumSeconds is < 2 or > 300) throw new InvalidOperationException("最大録音時間は2〜300秒です。");
-        if (ExternalSpeech.Enabled) ExternalSpeech.ValidateEndpoint();
+        if (ExternalSpeech.Mode == ExternalSpeechMode.TranscriptionServer && ExternalSpeech.Model.Length == 0) ExternalSpeech.ValidateAddress();
+        else if (ExternalSpeech.Enabled) ExternalSpeech.ValidateEndpoint();
         if (LiveDisplayEnabled) PreviewSpeech().ValidateEndpoint();
         if (!LiveEngines.Any(e => e.Id == LiveEngine)) throw new InvalidOperationException("途中認識モデルを確認してください。");
         if (Models is null || Models.Length is < 1 or > 8 || !Models.Any(m => !string.IsNullOrEmpty(m)) ||

@@ -66,6 +66,52 @@ internal static class ExternalSpeechTests
         try { (preview with { Endpoint = options.Endpoint }).ValidateEndpoint(); }
         catch (InvalidOperationException) { refused = true; }
         Require(refused, "speech.cppのローカル接続に外部ホストを使用しない");
+        await TranscriptionServerAsync();
+    }
+
+    private static async Task TranscriptionServerAsync()
+    {
+        static HttpResponseMessage Json(string value) => new(HttpStatusCode.OK) { Content = new StringContent(value) };
+        var server = ExternalSpeechSettings.TranscriptionServerDefault;
+        var tokenVersion = 0;
+        using var http = new HttpClient(new TestHandler(async request =>
+        {
+            Require(request.RequestUri?.Authority == "127.0.0.1:8769", "録音と操作トークンの送信先を同じサーバーに限定");
+            if (request.RequestUri!.AbsolutePath == "/api/health")
+            {
+                Require(request.Method == HttpMethod.Get && !request.Headers.Contains("X-Local-Token"), "healthは認証情報なしで照会");
+                return Json($$"""{"appId":"meeting-transcriber","protocolVersion":3,"authMode":"local","acceptingJobs":true,"token":"fixture-{{++tokenVersion}}"}""");
+            }
+            Require(request.Headers.GetValues("X-Local-Token").Single() == $"fixture-{tokenVersion}" &&
+                request.Headers.Authorization is null, "操作トークンを取得して当該リクエストにだけ付与");
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/v1/models")
+                return Json("""
+                    {"data":[
+                        {"id":"whisper/base","x_meeting":{"label":"Whisper Base","task":"transcription","availability":"download_on_first_use","available":false}},
+                        {"id":"haas/ja","x_meeting":{"label":"Haas","task":"transcription","availability":"installed","available":true}},
+                        {"id":"diarization/diar","x_meeting":{"task":"diarization","available":true}},
+                        {"id":"haas/missing","x_meeting":{"task":"transcription","available":false}},
+                        {"id":"haas/ja","x_meeting":{"task":"transcription","available":true}}
+                    ]}
+                    """);
+            Require(request.Method == HttpMethod.Post && request.RequestUri.AbsolutePath == "/v1/audio/transcriptions", "文字起こしへPOST");
+            var fields = ((MultipartFormDataContent)request.Content!).ToDictionary(x => x.Headers.ContentDisposition!.Name!.Trim('"'));
+            Require(await fields["model"].ReadAsStringAsync() == "haas/ja", "サーバー一覧のモデルIDをそのまま送信");
+            return Json("""{"text":"試験の文字起こし"}""");
+        }));
+        var models = await ExternalSpeechRecognizer.ListTranscriptionModelsAsync(http, server, CancellationToken.None);
+        Require(models.Select(model => model.Id).SequenceEqual(["whisper/base", "haas/ja"]) &&
+            models[0].Label.Contains("初回取得", StringComparison.Ordinal), "利用可能なASRと初回取得可の候補だけを表示");
+        var chosen = server with { Model = models[1].Id };
+        var result = await ExternalSpeechRecognizer.RecognizeAsync(http, [1, 2, 3], chosen, CancellationToken.None);
+        Require(result.Succeeded && result.Text == "試験の文字起こし" && tokenVersion == 2, "再取得したトークンで文字起こし結果を取得");
+        using var notReady = new HttpClient(new TestHandler(request =>
+        {
+            Require(request.RequestUri?.AbsolutePath == "/api/health", "受付準備中は録音を送らない");
+            return Task.FromResult(Json("""{"appId":"meeting-transcriber","protocolVersion":3,"authMode":"local","acceptingJobs":false,"token":"fixture"}"""));
+        }));
+        var preparing = await ExternalSpeechRecognizer.RecognizeAsync(notReady, [1, 2, 3], chosen, CancellationToken.None);
+        Require(!preparing.Succeeded && preparing.Error.Contains("受付準備中", StringComparison.Ordinal), "サーバーの準備中を認識失敗の理由に表示");
     }
 
     private static void Require(bool condition, string message)

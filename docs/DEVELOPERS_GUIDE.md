@@ -30,6 +30,10 @@ $test = '.\tests\EchoType.Tests\bin\Debug\net10.0-windows\EchoType.Tests.exe'
 
 ## 保存先とモデル
 
+TranscriptionServerを使用する場合は、設定の接続方式で「このPCの TranscriptionServer」を選択します。既定は `http://127.0.0.1:8769/v1/audio/transcriptions` です。確定モデルと即時表示モデルは、それぞれサーバーから取得した一覧で選びます。起動準備中の場合は、TranscriptionServerの準備完了後に「モデル一覧を更新」を押してください。
+
+接続はループバックに限定します。認識の受付状態と一時トークンは `/api/health` で確認し、`/v1/models` の文字起こし候補だけを表示します。認識時は選んだモデルIDを変更せずに `/v1/audio/transcriptions` へ送ります。一時トークンは設定に保存しません。
+
 製品データは `%LOCALAPPDATA%\EchoType` に保存し、SQLite の本文・設定・辞書と一時音声は Windows の同一ユーザー用 DPAPI で保護します。`--data-root` は別の EchoType 環境を指定します。移行時の `--source-root` は旧版のデータルートを指定します。`--smoke-ui` は試験専用データルートを要求し、マイクとグローバルキー監視を停止した状態で画面を検証して終了します。
 
 入力先監視時は Win32 のフォーカス情報を確認し、UIA による本文の取得や前面化は明示操作時に行います。対話デスクトップ試験では検証用の別プロセスに作った編集欄をターゲットに指定し、決定による実書き込みと別窓への誤入力防止を確認します。

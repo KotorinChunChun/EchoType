@@ -74,6 +74,7 @@ public sealed class VoiceInputSettingsWindow : Window
             var modes = new[]
             {
                 new { Name = "このPCの speech.cpp サーバー", Mode = ExternalSpeechMode.SpeechCpp },
+                new { Name = "このPCの TranscriptionServer", Mode = ExternalSpeechMode.TranscriptionServer },
                 new { Name = "外部サーバー（APIキーなし）", Mode = ExternalSpeechMode.Server },
                 new { Name = "外部API（APIキーあり）", Mode = ExternalSpeechMode.ApiKey }
             };
@@ -84,17 +85,111 @@ public sealed class VoiceInputSettingsWindow : Window
             fields.Children.Add(new Label { Content = "文字起こしAPIのURL", Target = endpoint });
             fields.Children.Add(endpoint);
             var model = new TextBox { Text = value.Model, MaxLength = 200, MinHeight = 30 };
-            fields.Children.Add(new Label { Content = name + "の名前", Target = model });
+            var modelLabel = new Label { Content = name + "の名前", Target = model };
+            fields.Children.Add(modelLabel);
             fields.Children.Add(model);
+            var modelList = new ComboBox
+            {
+                DisplayMemberPath = nameof(Windows.TranscriptionModel.Label),
+                SelectedValuePath = nameof(Windows.TranscriptionModel.Id),
+                MinHeight = 30
+            };
+            fields.Children.Add(modelList);
+            var reload = new Button { Content = "モデル一覧を更新", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
+            var listStatus = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            fields.Children.Add(reload);
+            fields.Children.Add(listStatus);
             var key = new PasswordBox { Password = value.ApiKey, MaxLength = 4096, MinHeight = 30 };
             var keyLabel = new Label { Content = "APIキー", Target = key };
             fields.Children.Add(keyLabel);
             fields.Children.Add(key);
-            void UpdateKey() => key.Visibility = keyLabel.Visibility = (ExternalSpeechMode)mode.SelectedValue == ExternalSpeechMode.ApiKey ? Visibility.Visible : Visibility.Collapsed;
-            mode.SelectionChanged += (_, _) => UpdateKey();
-            UpdateKey();
+            var lastMode = value.Mode;
+            var otherEndpoint = value.Mode == ExternalSpeechMode.TranscriptionServer ? ExternalSpeechSettings.SpeechCppDefault.Endpoint : value.Endpoint;
+            var serverEndpoint = value.Mode == ExternalSpeechMode.TranscriptionServer ? value.Endpoint : ExternalSpeechSettings.TranscriptionServerDefault.Endpoint;
+            CancellationTokenSource? pendingList = null;
+            bool UsesTranscriptionServer() => (ExternalSpeechMode)mode.SelectedValue == ExternalSpeechMode.TranscriptionServer;
+            void UpdateFields()
+            {
+                var server = UsesTranscriptionServer();
+                modelList.Visibility = reload.Visibility = listStatus.Visibility = server ? Visibility.Visible : Visibility.Collapsed;
+                model.Visibility = server ? Visibility.Collapsed : Visibility.Visible;
+                modelLabel.Target = server ? modelList : model;
+                key.Visibility = keyLabel.Visibility = (ExternalSpeechMode)mode.SelectedValue == ExternalSpeechMode.ApiKey ? Visibility.Visible : Visibility.Collapsed;
+            }
             ExternalSpeechSettings Read() => new() { Mode = (ExternalSpeechMode)mode.SelectedValue, Endpoint = endpoint.Text.Trim(),
-                Model = model.Text.Trim(), ApiKey = (ExternalSpeechMode)mode.SelectedValue == ExternalSpeechMode.ApiKey ? key.Password : "" };
+                Model = UsesTranscriptionServer() ? modelList.SelectedValue as string ?? "" : model.Text.Trim(),
+                ApiKey = (ExternalSpeechMode)mode.SelectedValue == ExternalSpeechMode.ApiKey ? key.Password : "" };
+            void ResetList()
+            {
+                pendingList?.Cancel();
+                pendingList = null;
+                modelList.ItemsSource = null;
+                if (UsesTranscriptionServer() && value.Mode == ExternalSpeechMode.TranscriptionServer &&
+                    endpoint.Text.Trim() == value.Endpoint && value.Model.Length > 0)
+                {
+                    modelList.ItemsSource = new[] { new Windows.TranscriptionModel(value.Model, value.Model) };
+                    modelList.SelectedValue = value.Model;
+                }
+                listStatus.Text = "";
+            }
+            async Task RefreshListAsync()
+            {
+                if (!UsesTranscriptionServer() || !fields.IsVisible) return;
+                pendingList?.Cancel();
+                using var current = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                pendingList = current;
+                var selected = Read();
+                listStatus.Text = "モデル一覧を取得中…";
+                try
+                {
+                    var models = await Windows.ExternalSpeechRecognizer.ListTranscriptionModelsAsync(selected, current.Token);
+                    if (pendingList != current) return;
+                    var savedUnavailable = selected.Model.Length > 0 && selected.Mode == value.Mode &&
+                        selected.Endpoint == value.Endpoint && selected.Model == value.Model && models.All(m => m.Id != selected.Model);
+                    if (savedUnavailable)
+                        models = [.. models, new Windows.TranscriptionModel(value.Model, $"{value.Model}（保存済み・現在の一覧にありません）")];
+                    modelList.ItemsSource = models;
+                    modelList.SelectedValue = selected.Model;
+                    listStatus.Text = models.Length == 0 ? "選択できる文字起こしモデルがありません。" :
+                        savedUnavailable ? "保存済みのモデルが一覧にありません。利用可能なモデルを選び直してください。" : "";
+                }
+                catch (OperationCanceledException)
+                {
+                    if (pendingList == current) listStatus.Text = "モデル一覧の取得がタイムアウトしました。";
+                }
+                catch (InvalidOperationException ex)
+                {
+                    if (pendingList == current) listStatus.Text = ex.Message;
+                }
+                finally { if (pendingList == current) pendingList = null; }
+            }
+            endpoint.TextChanged += (_, _) => ResetList();
+            mode.SelectionChanged += async (_, _) =>
+            {
+                if (UsesTranscriptionServer())
+                {
+                    otherEndpoint = endpoint.Text;
+                    endpoint.Text = serverEndpoint;
+                }
+                else if (lastMode == ExternalSpeechMode.TranscriptionServer)
+                {
+                    serverEndpoint = endpoint.Text;
+                    endpoint.Text = otherEndpoint;
+                }
+                lastMode = (ExternalSpeechMode)mode.SelectedValue;
+                ResetList();
+                UpdateFields();
+                await RefreshListAsync();
+            };
+            fields.IsVisibleChanged += async (_, _) =>
+            {
+                if (fields.IsVisible) await RefreshListAsync();
+                else { pendingList?.Cancel(); pendingList = null; }
+            };
+            reload.Click += async (_, _) => await RefreshListAsync();
+            Closed += (_, _) => { pendingList?.Cancel(); pendingList = null; };
+            UpdateFields();
+            ResetList();
 
             var check = new Button { Content = "接続テスト", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
             var checkStatus = new TextBlock { TextWrapping = TextWrapping.Wrap };
@@ -140,7 +235,8 @@ public sealed class VoiceInputSettingsWindow : Window
                 if (!int.TryParse(seconds.Text, out var maximum)) throw new InvalidOperationException("録音秒数は整数で指定してください。");
                 if (!int.TryParse(gap.Text, out var targetGap)) throw new InvalidOperationException("入力欄との間隔は整数で指定してください。");
                 var final = finalSpeech.Read();
-                if (final != ExternalSpeechSettings.SpeechCppDefault) final.ValidateEndpoint();
+                if (final.Mode == ExternalSpeechMode.TranscriptionServer && final.Model.Length == 0) final.ValidateAddress();
+                else if (final != ExternalSpeechSettings.SpeechCppDefault) final.ValidateEndpoint();
                 var live = liveSpeech.Read();
                 if (liveEnabled.IsChecked == true) live.ValidateEndpoint();
                 controller.SaveSettings(controller.Settings with

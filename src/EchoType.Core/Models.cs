@@ -6,6 +6,10 @@ namespace EchoType.Core;
 
 public sealed record AppSettings
 {
+    // DesktopAgentや別の版で保存された未使用項目は、読み飛ばしても設定保存時まで保持する。
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalSettings { get; init; }
+
     public DecisionSettings Decisions { get; init; } = new();
     public RecognitionPerformance Performance { get; init; } = new();
     public int SchemaVersion { get; init; } = 1;

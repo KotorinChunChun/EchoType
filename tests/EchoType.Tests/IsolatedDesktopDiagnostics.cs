@@ -9,14 +9,16 @@ internal static class IsolatedDesktopDiagnostics
 {
     public static int Run(string mode, string? appExecutable = null)
     {
+        var dataRoot = Path.Combine(AppContext.BaseDirectory, "test-output", "app-" + Guid.NewGuid().ToString("N"));
         var (executable, argument) = mode switch
         {
             "queue" => (Environment.ProcessPath!, "--queue-child"),
             "focus" => (Environment.ProcessPath!, "--focus-child"),
-            "app" when appExecutable is not null => (Path.GetFullPath(appExecutable),
-                "--smoke-ui --data-root \"" + Path.Combine(AppContext.BaseDirectory, "test-output", "app-" + Guid.NewGuid().ToString("N")) + "\""),
+            "app" or "app-legacy" when appExecutable is not null => (Path.GetFullPath(appExecutable),
+                $"--smoke-ui --data-root \"{dataRoot}\""),
             _ => throw new ArgumentException("隔離対象外の試験です。")
         };
+        if (mode == "app-legacy") MigrationTests.SeedSavedLegacySettings(dataRoot);
         var name = "EchoTypeTest_" + Guid.NewGuid().ToString("N");
         var desktop = CreateDesktop(name, null, 0, 0, 0x10000000, 0);
         if (desktop == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "検証用デスクトップを作成できません。通常画面には切り替えません。");

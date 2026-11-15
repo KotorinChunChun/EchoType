@@ -2,6 +2,7 @@ Console.OutputEncoding = new System.Text.UTF8Encoding(false);
 if (args is ["--voice-focus-native-fixture"]) return VoiceInputNativeFocusDiagnostics.Fixture();
 if (args is ["--isolated", var mode]) return IsolatedDesktopDiagnostics.Run(mode);
 if (args is ["--isolated-app", var app]) return IsolatedDesktopDiagnostics.Run("app", app);
+if (args is ["--isolated-app-legacy-settings", var legacyApp]) return IsolatedDesktopDiagnostics.Run("app-legacy", legacyApp);
 if (args is ["--queue-child"]) return VoiceInputQueueDiagnostics.Run();
 if (args is ["--focus-child"]) return VoiceInputMonitorDiagnostics.Run(20);
 if (args is ["--whisper-setup-smoke", var wave]) return await WhisperSetupDiagnostics.RunAsync(wave);

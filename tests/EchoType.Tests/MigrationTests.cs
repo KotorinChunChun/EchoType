@@ -2,6 +2,7 @@ using EchoType.Core;
 using EchoType.Windows;
 using Microsoft.Data.Sqlite;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 internal static class MigrationTests
 {
@@ -13,8 +14,10 @@ internal static class MigrationTests
             var voice = new VoiceInputSettings { TriggerKeys = [0xA3, 0xA1], Models = ["whisper-base", "", "windows"], FormattingPrompt = "試験用の整形" };
             var profile = new VoiceApplicationProfile(@"C:\test\fixture.exe", "試験", voice);
             var word = new PersonalWord(Guid.NewGuid().ToString(), "試割", "試験", "しけん");
-            var file = Fixture(source, ("settings", "current", new AppSettings { AsrVocabulary = "語彙", CodexHome = "試験用の旧パス", Performance = new() { CpuThreads = 3 } }),
-                ("voice-input-settings", "current", voice), ("voice-profile", "profile", profile),
+            var savedVoice = JsonSerializer.SerializeToNode(voice, JsonFormat.Options)!.AsObject();
+            savedVoice["recognition"] = LegacySettings(voice.Recognition);
+            var file = Fixture(source, ("settings", "current", LegacySettings(new AppSettings { AsrVocabulary = "語彙", CodexHome = "試験用の旧パス", Performance = new() { CpuThreads = 3 } })),
+                ("voice-input-settings", "current", savedVoice), ("voice-profile", "profile", profile),
                 ("personal-word", word.Id, word), ("transcript", "recorded", "移行対象外"));
             var original = File.ReadAllBytes(file);
             var paths = new AgentPaths(Path.Combine(root, "new"), source);
@@ -23,6 +26,7 @@ internal static class MigrationTests
             var imported = store.LoadVoiceInputSettings();
             Require(imported.Models.SequenceEqual(voice.Models) && imported.TriggerKeys.SequenceEqual(voice.TriggerKeys)
                 && imported.FormattingPrompt == voice.FormattingPrompt, "音声入力設定を保持");
+            Require(!JsonSerializer.Serialize(imported, JsonFormat.Options).Contains("wakeAcknowledgementReplies"), "旧アプリ専用の追加設定は取り込まない");
             Require(store.GetVoiceProfiles().Single().Name == profile.Name && store.GetPersonalWords().Single() == word, "アプリ別設定と辞書を保持");
             var shared = store.LoadSettings();
             Require(shared.AsrVocabulary == "語彙" && shared.Performance.CpuThreads == 3 && shared.CodexHome.Length == 0, "音声入力に必要な共通設定だけを移行");
@@ -36,6 +40,20 @@ internal static class MigrationTests
             count.CommandText = "SELECT COUNT(*) FROM entries WHERE kind='transcript'";
             Require(Convert.ToInt32(count.ExecuteScalar()) == 0, "会話の文字起こしは対象外");
             Require(File.ReadAllBytes(file).SequenceEqual(original) && paths.Model != paths.RecognitionModels, "旧DBとモデル参照先を分離");
+            return Task.CompletedTask;
+        }));
+
+        tests.Add(("保存済みの旧設定で起動し、設定を読み書きしても未使用項目を保持する", () =>
+        {
+            var paths = SeedSavedLegacySettings(Path.Combine(root, "old-settings"));
+            using var store = new SecureStore(paths);
+            var loaded = store.LoadSettings();
+            Require(loaded.AsrVocabulary == "保持する語彙", "既存の共通設定を読める");
+            store.SaveSettings(loaded with { DeviceName = "試験マイク" });
+            var saved = store.LoadSettings();
+            var json = JsonSerializer.SerializeToNode(saved, JsonFormat.Options)!;
+            Require(saved.DeviceName == "試験マイク" && (string?)json["wakeAcknowledgementReplies"] == "旧版専用の応答",
+                "設定を保存しても既存の追加項目を保持する");
             return Task.CompletedTask;
         }));
 
@@ -57,6 +75,21 @@ internal static class MigrationTests
             Require(store.GetPersonalWords().Single() == word, "修正後は再試行できる");
             return Task.CompletedTask;
         }));
+    }
+
+    internal static AgentPaths SeedSavedLegacySettings(string root)
+    {
+        var paths = new AgentPaths(root);
+        var file = Fixture(paths.Root, ("settings", "current", LegacySettings(new AppSettings { AsrVocabulary = "保持する語彙" })));
+        File.Move(file, Path.Combine(paths.Root, "data", "echo.sqlite"));
+        return paths;
+    }
+
+    private static JsonObject LegacySettings(AppSettings settings)
+    {
+        var json = JsonSerializer.SerializeToNode(settings, JsonFormat.Options)!.AsObject();
+        json["wakeAcknowledgementReplies"] = "旧版専用の応答";
+        return json;
     }
 
     private static string Fixture(string root, params (string Kind, string Id, object Value)[] values)

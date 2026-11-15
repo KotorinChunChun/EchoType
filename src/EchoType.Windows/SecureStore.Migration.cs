@@ -82,6 +82,7 @@ public sealed partial class SecureStore
                 ? VoiceInputSettings.DefaultFormattingPrompt : settings.FormattingPrompt,
             Recognition = settings.Recognition with
             {
+                AdditionalSettings = null,
                 ApiEnvironment = new(), CodexHome = "", CodexExecutable = "",
                 ScreenVocabularyEnabled = false, SkillVocabularyEnabled = false
             }

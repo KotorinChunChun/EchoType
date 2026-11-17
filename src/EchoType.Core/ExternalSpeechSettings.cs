@@ -1,6 +1,6 @@
 namespace EchoType.Core;
 
-public enum ExternalSpeechMode { Local, Server, ApiKey, SpeechCpp, TranscriptionServer }
+public enum ExternalSpeechMode { Local, Server, ApiKey, SpeechCpp, TranscriptionServer, WindowsDebug }
 
 public sealed record ExternalSpeechSettings
 {
@@ -21,6 +21,11 @@ public sealed record ExternalSpeechSettings
         Mode = ExternalSpeechMode.TranscriptionServer,
         Endpoint = "http://127.0.0.1:8769/v1/audio/transcriptions"
     };
+    public static ExternalSpeechSettings WindowsDebugDefault { get; } = new()
+    {
+        Mode = ExternalSpeechMode.WindowsDebug,
+        Model = "Windows標準（デバッグ）"
+    };
 
     public Uri ValidateAddress()
     {
@@ -38,13 +43,24 @@ public sealed record ExternalSpeechSettings
         return uri;
     }
 
-    public Uri ValidateEndpoint()
+    public Uri ValidateConnection()
     {
         var uri = ValidateAddress();
-        if (string.IsNullOrWhiteSpace(Model) || Model.Length > 200 || Model.Any(char.IsControl))
-            throw new InvalidOperationException("外部認識のモデル名を指定してください。");
         if (Mode == ExternalSpeechMode.ApiKey && (string.IsNullOrEmpty(ApiKey) || ApiKey.Length > 4096 || ApiKey.Any(c => c is < '!' or > '~')))
             throw new InvalidOperationException("外部認識のAPIキーを確認してください。");
         return uri;
+    }
+
+    public Uri ValidateEndpoint()
+    {
+        var uri = ValidateConnection();
+        if (string.IsNullOrWhiteSpace(Model) || Model.Length > 200 || Model.Any(char.IsControl))
+            throw new InvalidOperationException("外部認識のモデル名を指定してください。");
+        return uri;
+    }
+
+    public void ValidateForRecognition()
+    {
+        if (Mode != ExternalSpeechMode.WindowsDebug) ValidateEndpoint();
     }
 }

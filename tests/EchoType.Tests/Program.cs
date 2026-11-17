@@ -8,6 +8,8 @@ if (args is ["--focus-child"]) return VoiceInputMonitorDiagnostics.Run(20);
 if (args is ["--focus-interactive"]) return VoiceInputMonitorDiagnostics.Run(1, interactive: true);
 if (args is ["--confirm-interactive"]) return VoiceInputMonitorDiagnostics.Run(0, interactive: true, confirmOnly: true);
 if (args is ["--speech-loopback", var endpoint]) return await ExternalSpeechTests.LoopbackAsync(endpoint);
+if (args is ["--windows-speech-smoke", var windowsWave])
+    return await ExternalSpeechTests.WindowsSpeechAsync(windowsWave);
 if (args is ["--transcription-server-smoke", var url, var model, var wave])
 {
     var settings = new EchoType.Core.ExternalSpeechSettings { Mode = EchoType.Core.ExternalSpeechMode.TranscriptionServer, Endpoint = url, Model = model };

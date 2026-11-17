@@ -1,7 +1,7 @@
 namespace EchoType.Core;
 
 /// <summary>通常録音・比較の設定と独立した音声入力専用設定。</summary>
-public sealed record VoiceInputSettings
+public sealed partial record VoiceInputSettings
 {
     public bool Enabled { get; init; } = true;
     public bool AutomaticInput { get; init; }
@@ -29,8 +29,6 @@ public sealed record VoiceInputSettings
     public ExternalSpeechSettings ExternalSpeech { get; init; } = new();
     public bool LiveDisplayEnabled { get; init; }
     public ExternalSpeechSettings LiveSpeech { get; init; } = new();
-    public ExternalSpeechSettings FinalSpeech() => ExternalSpeech.Enabled ? ExternalSpeech : ExternalSpeechSettings.SpeechCppDefault;
-    public ExternalSpeechSettings PreviewSpeech() => LiveSpeech.Enabled ? LiveSpeech : ExternalSpeechSettings.SpeechCppDefault;
     public string FormattingModel { get; init; } = "gpt-6-luna";
     [System.Text.Json.Serialization.JsonIgnore]
     public string PersonalCorrections { get; init; } = "[]";
@@ -85,9 +83,7 @@ public sealed record VoiceInputSettings
         if (!double.IsFinite(WindowWidth) || !double.IsFinite(WindowHeight) || WindowWidth is < 200 or > 16000 || WindowHeight is < 150 or > 16000) throw new InvalidOperationException("保存ウィンドウサイズが不正です。");
         if (TargetGap is < 0 or > 200) throw new InvalidOperationException("入力欄との間隔は0〜200で指定してください。");
         if (MaximumSeconds is < 2 or > 300) throw new InvalidOperationException("最大録音時間は2〜300秒です。");
-        if (ExternalSpeech.Mode == ExternalSpeechMode.TranscriptionServer && ExternalSpeech.Model.Length == 0) ExternalSpeech.ValidateAddress();
-        else if (ExternalSpeech.Enabled) ExternalSpeech.ValidateEndpoint();
-        if (LiveDisplayEnabled) PreviewSpeech().ValidateEndpoint();
+        ValidateSpeechConnections();
         if (!LiveEngines.Any(e => e.Id == LiveEngine)) throw new InvalidOperationException("途中認識モデルを確認してください。");
         if (Models is null || Models.Length is < 1 or > 8 || !Models.Any(m => !string.IsNullOrEmpty(m)) ||
             Models.Any(m => m is null || m.Length > 0 && !LocalEngines.Any(e => e.Id == m)))

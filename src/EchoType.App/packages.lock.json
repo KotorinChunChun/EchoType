@@ -52,6 +52,11 @@
           "SQLitePCLRaw.core": "2.1.11"
         }
       },
+      "System.Speech": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "nHlCdjoeReiSx4kzgPEwPRlbOAyuVFwndXTZZT+CLnHb8UIfB+YMgpQjQ7faYvs3xU8wyvpb6dt+U+HwdlbG7w=="
+      },
       "echotype.core": {
         "type": "Project"
       },
@@ -62,10 +67,10 @@
           "Microsoft.Data.Sqlite.Core": "[10.0.0, )",
           "NAudio.Wasapi": "[2.2.1, )",
           "NAudio.WinMM": "[2.2.1, )",
-          "SQLitePCLRaw.bundle_winsqlite3": "[2.1.11, )"
+          "SQLitePCLRaw.bundle_winsqlite3": "[2.1.11, )",
+          "System.Speech": "[10.0.0, )"
         }
       }
-    },
-    "net10.0-windows7.0/win-x64": {}
+    }
   }
 }

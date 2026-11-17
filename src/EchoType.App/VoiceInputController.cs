@@ -257,7 +257,7 @@ public sealed partial class VoiceInputController
         try
         {
             Settings.Validate();
-            if (_recognize is null) Settings.FinalSpeech().ValidateEndpoint();
+            if (_recognize is null) Settings.FinalSpeech().ValidateForRecognition();
             StopPlayback(); StopMonitor();
             _window?.ResetFormattingDiff();
             var device = ResolveDevice(); _recordingDevice = device.Name;

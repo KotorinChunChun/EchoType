@@ -14,7 +14,9 @@ public static class ExternalSpeechRecognizer
     private static readonly HttpClient LoopbackConnection = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = false });
 
     public static Task<AsrResult> RecognizeAsync(byte[] wave, ExternalSpeechSettings settings, CancellationToken cancellation) =>
-        RecognizeAsync(SelectConnection(settings), wave, settings, cancellation);
+        settings.Mode == ExternalSpeechMode.WindowsDebug
+            ? WindowsSpeechRecognizer.RecognizeAsync(wave, cancellation)
+            : RecognizeAsync(SelectConnection(settings), wave, settings, cancellation);
 
     private static HttpClient SelectConnection(ExternalSpeechSettings settings) =>
         settings.Mode is ExternalSpeechMode.SpeechCpp or ExternalSpeechMode.TranscriptionServer &&
@@ -146,6 +148,12 @@ public static class ExternalSpeechRecognizer
 
     public static async Task<string> CheckAsync(ExternalSpeechSettings settings, CancellationToken cancellation)
     {
+        if (settings.Mode == ExternalSpeechMode.WindowsDebug)
+            return await Task.Run(() =>
+            {
+                using var engine = WindowsSpeechRecognizer.CreateEngine();
+                return "Windowsの日本語音声認識を使用できます";
+            }, cancellation).ConfigureAwait(false);
         // 実際の録音を使わず、文字起こしAPIが指定モデルで音声を処理できることを確認する。
         var sample = RecordingDevices.ToWave(new byte[48000]);
         var result = await RecognizeAsync(sample, settings, cancellation).ConfigureAwait(false);

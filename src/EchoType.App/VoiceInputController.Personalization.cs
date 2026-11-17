@@ -21,7 +21,7 @@ public sealed partial class VoiceInputController
         settings.Validate();
         if (_profile is not null)
         {
-            _profile = _profile with { Settings = settings with { PersonalCorrections = "[]", ExternalSpeech = new(), LiveSpeech = new() } };
+            _profile = _profile with { Settings = settings.WithoutSpeechConnections() with { PersonalCorrections = "[]" } };
             _store.SaveVoiceProfile(_profile);
             _profiles = _profiles.Where(p => !string.Equals(p.ApplicationPath, _profile.ApplicationPath, StringComparison.OrdinalIgnoreCase)).Append(_profile).ToArray();
             _commonSettings = new VoiceApplicationProfile("", "", _commonSettings).Apply(settings) with { PersonalCorrections = "[]" };

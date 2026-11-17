@@ -131,12 +131,6 @@ public partial class App : Application
         var window = Windows.OfType<VoiceInputWindow>().Single();
         if (!window.IsVisible || window.FindName("TargetButton") is not Button { ActualWidth: > 0, ActualHeight: > 0 })
             throw new InvalidOperationException("音声入力ウィンドウを表示できません。");
-        var settings = new VoiceInputSettingsWindow(voice) { Owner = window, ShowActivated = false };
-        settings.Show();
-        settings.UpdateLayout();
-        if (!settings.IsVisible || settings.Content is not FrameworkElement { ActualHeight: > 0 })
-            throw new InvalidOperationException("設定ウィンドウを表示できません。");
-        settings.Close();
         voice.SetSessionLocked(true);
         voice.Open();
         if (window.IsVisible) throw new InvalidOperationException("ロック中に音声入力ウィンドウが表示されました。");
@@ -162,6 +156,22 @@ public partial class App : Application
         if (live.Visibility != Visibility.Visible || !((TextBlock)window.FindName("LiveLabel")).Text.Contains("fixture-live") ||
             !((TextBlock)window.FindName("RecognitionText")).Text.Contains("fixture-final"))
             throw new InvalidOperationException("即時表示と確定のモデルが別々に表示されません。");
+        var settings = new VoiceInputSettingsWindow(voice) { Owner = window, ShowActivated = false };
+        settings.Show();
+        settings.UpdateLayout();
+        var controls = VisualChildren(settings).OfType<FrameworkElement>().ToArray();
+        var viewport = controls.OfType<ScrollViewer>().Single(element =>
+            System.Windows.Automation.AutomationProperties.GetAutomationId(element) == "VoiceSettingsViewport");
+        var choices = controls.OfType<ComboBox>().Where(combo =>
+            System.Windows.Automation.AutomationProperties.GetAutomationId(combo) is "FinalSpeechConnection" or "PreviewSpeechConnection").ToArray();
+        var heights = controls.OfType<Button>().Where(button => button.IsVisible).Select(button => button.ActualHeight).Distinct().ToArray();
+        if (!settings.IsVisible || viewport.Content is not Grid { ColumnDefinitions.Count: 3 } ||
+            viewport.ViewportHeight >= 450 && viewport.ScrollableHeight > 1 ||
+            choices.Length != 2 || choices.Any(combo => combo.Items.Count < 3 || combo.SelectedIndex < 2) ||
+            heights is not [32])
+            throw new InvalidOperationException($"設定画面の3列、既存接続の選択、スクロール、ボタンの高さを確認できません（画面 {viewport.ViewportHeight:F1}px / 縦スクロール {viewport.ScrollableHeight:F1}px）。");
+        Console.WriteLine($"設定の3列・同じボタン高・確定と即時表示への接続移行を確認 / 縦スクロール {viewport.ScrollableHeight:F1}px");
+        settings.Close();
         window.Close();
         if (window.IsVisible) throw new InvalidOperationException("閉じる操作で格納できません。");
         voice.Open();
@@ -171,6 +181,16 @@ public partial class App : Application
         if (!window.IsVisible || window.WindowState == WindowState.Minimized)
             throw new InvalidOperationException("格納したウィンドウを再表示できません。");
         Console.WriteLine("設定、即時表示の切替、独立したモデル名、一時停止、閉じる・最小化・再表示を確認しました。");
+    }
+
+    private static IEnumerable<DependencyObject> VisualChildren(DependencyObject parent)
+    {
+        for (var index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, index);
+            yield return child;
+            foreach (var descendant in VisualChildren(child)) yield return descendant;
+        }
     }
 
     private async Task ExitAsync(int code = 0)

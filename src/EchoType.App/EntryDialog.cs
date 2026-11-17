@@ -7,7 +7,7 @@ internal sealed class EntryDialog : Window
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
     public EntryDialog(Window owner, string title, Action save)
     {
-        Owner = owner; Title = title; Width = 640; Height = 570; MinWidth = 480; MinHeight = 320;
+        Owner = owner; Title = WindowTitle.Create(title); Width = 640; Height = 570; MinWidth = 480; MinHeight = 320;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var layout = new DockPanel { Margin = new Thickness(16) }; Content = layout;
         var footer = new StackPanel(); DockPanel.SetDock(footer, Dock.Bottom); layout.Children.Add(footer); footer.Children.Add(_status);
@@ -25,6 +25,14 @@ internal sealed class EntryDialog : Window
         _fields.Children.Add(box); return box;
     }
     public CheckBox Check(string label, bool value) { var box = new CheckBox { Content = label, IsChecked = value, Margin = new Thickness(0, 8, 0, 0) }; _fields.Children.Add(box); return box; }
+    public (Label Label, PasswordBox Box) Password(string label, string value)
+    {
+        var box = new PasswordBox { Password = value, MaxLength = 4096, MinHeight = 30 };
+        var title = new Label { Content = label, Target = box };
+        _fields.Children.Add(title);
+        _fields.Children.Add(box);
+        return (title, box);
+    }
     public ComboBox Choice(string label, IEnumerable<string> choices, string selected)
     {
         _fields.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 8, 0, 3) });

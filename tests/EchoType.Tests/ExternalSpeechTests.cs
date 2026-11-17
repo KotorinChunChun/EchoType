@@ -5,6 +5,18 @@ using System.Net.Http;
 
 internal static class ExternalSpeechTests
 {
+    internal static async Task<int> WindowsSpeechAsync(string path)
+    {
+        var settings = ExternalSpeechSettings.WindowsDebugDefault;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var status = await ExternalSpeechRecognizer.CheckAsync(settings, deadline.Token);
+        Console.WriteLine(status);
+        var result = await ExternalSpeechRecognizer.RecognizeAsync(await File.ReadAllBytesAsync(path, deadline.Token), settings, deadline.Token);
+        Require(result.Succeeded && result.Text.Contains("音声認識", StringComparison.Ordinal),
+            result.Error ?? "合成WAVをWindows標準の日本語認識で文字起こし");
+        Console.WriteLine("PASS Windows標準の日本語認識で合成WAVを文字起こし");
+        return 0;
+    }
     internal static async Task<int> LoopbackAsync(string endpoint)
     {
         var settings = ExternalSpeechSettings.SpeechCppDefault with { Endpoint = endpoint, Model = "fixture" };
@@ -38,6 +50,27 @@ internal static class ExternalSpeechTests
             var profile = store.GetVoiceProfiles().Single();
             Require(!profile.Settings.ExternalSpeech.Enabled && !profile.Settings.LiveSpeech.Enabled &&
                 profile.Apply(restored).PreviewSpeech() == preview, "外部接続は共通設定を使い、アプリ別に複製しない");
+
+            var sameEndpoint = settings with { LiveSpeech = options with { Model = "other-model" } };
+            var migrated = sameEndpoint.MigrateSpeechConnections();
+            Require(migrated.SpeechConnections.Length == 1 && migrated.FinalSpeech() == options &&
+                migrated.PreviewSpeech() == sameEndpoint.LiveSpeech, "同じ接続でも確定と即時表示で異なるモデルを保持");
+            var extra = Enumerable.Range(1, 6).Select(i => new SpeechConnection(Guid.NewGuid(), $"テスト接続{i}",
+                preview with { Model = "" }));
+            var next = migrated with
+            {
+                SpeechConnections = [.. migrated.SpeechConnections, .. extra],
+                PreviewSelection = new(SpeechConnection.WindowsDebug.Id, "")
+            };
+            store.SaveVoiceInputSettings(next);
+            var restoredCatalog = store.LoadVoiceInputSettings().MigrateSpeechConnections();
+            Require(restoredCatalog.SpeechConnections.SequenceEqual(next.SpeechConnections) &&
+                restoredCatalog.FinalSpeech() == options && restoredCatalog.PreviewSpeech() == ExternalSpeechSettings.WindowsDebugDefault,
+                "登録済み接続とWindows標準の選択を保存・復元");
+            store.SaveVoiceProfile(new(@"C:\test\fixture.exe", "試験", next));
+            var savedProfile = store.GetVoiceProfiles().Single().Settings;
+            Require(savedProfile.SpeechConnections.Length == 0 && savedProfile.FinalSelection is null,
+                "アプリ別設定へ接続資格情報を保存しない");
         }
         byte[] wave = [1, 2, 3];
         foreach (var connection in new[] { options with { Mode = ExternalSpeechMode.Server }, options, preview })

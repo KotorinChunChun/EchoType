@@ -30,7 +30,9 @@ $test = '.\tests\EchoType.Tests\bin\Debug\net10.0-windows\EchoType.Tests.exe'
 
 ## 保存先とモデル
 
-TranscriptionServerを使用する場合は、設定の接続方式で「TranscriptionServer」を選択します。既定は `http://127.0.0.1:8769/v1/audio/transcriptions` です。確定モデルと即時表示モデルは、それぞれサーバーから取得した一覧で選びます。起動準備中の場合は、TranscriptionServerの準備完了後に「モデル一覧を更新」を押してください。
+設定の「登録済みの接続」の［追加］で接続名・方式・URL・必要なAPIキーを登録します。確定と即時表示では登録した接続を個別に選択し、同じ接続で別々のモデルを指定できます。TranscriptionServerの既定URLは `http://127.0.0.1:8769/v1/audio/transcriptions` です。TranscriptionServerのモデルは取得した一覧で選びます。サーバーの起動準備が完了した後は［モデル一覧を更新］を押してください。
+
+「Windows標準（デバッグ）」は確定と即時表示の接続欄から直接選択できます。OSにある日本語の認識エンジンを使用します。検証用WAVでの認識は `& $test --windows-speech-smoke $wav` で確認できます。
 
 ループバックではHTTP、別のPCへはHTTPSを使います。認識の受付状態とlocal／lan認証の一時トークンは `/api/health` で確認し、`/v1/models` の文字起こし候補を表示します。認識時は選んだモデルIDを変更せずに `/v1/audio/transcriptions` へ送ります。一時トークンは設定に保存しません。
 

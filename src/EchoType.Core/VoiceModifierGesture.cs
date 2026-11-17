@@ -41,6 +41,8 @@ public sealed class VoiceModifierGesture
         }
         for (var key = 8; !other && key <= 0xFE; key++)
         {
+            // VK_DBE_ALPHANUMERIC～VK_DBE_DBCSCHARは、IMEのモードが切り替わるまで押下中として残ることがある。
+            if (key is >= 0xF0 and <= 0xF4) continue;
             if (key is 0x10 or 0x11 or 0x12 || key == _shortcut.MainKey || ModifierKeyCodes.Contains(key)) continue;
             if (down(key)) { other = true; break; }
         }

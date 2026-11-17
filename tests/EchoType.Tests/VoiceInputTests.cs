@@ -173,6 +173,28 @@ internal static class VoiceInputTests
             if (!rejected) throw new Exception("キーなしで保存可能");
             return Task.CompletedTask;
         }));
+        tests.Add(("日本語IMEの仮想キーが常に押下扱いでも録音でき、実キーの競合は破棄する", () =>
+        {
+            var gesture = new VoiceModifierGesture();
+            gesture.Configure(new VoiceInputSettings().GetRecordingShortcut());
+            VoiceInputGesture.Change Update(long ms, params int[] pressed) =>
+                gesture.Update(key => key is 0xF2 or 0xF4 || pressed.Contains(key), ms);
+
+            Update(0);
+            if (Update(10, 0xA2) != VoiceInputGesture.Change.None ||
+                Update(20, 0xA2, 0xA0) != VoiceInputGesture.Change.Started ||
+                Update(1020, 0xA2) != VoiceInputGesture.Change.Accepted)
+                throw new Exception("日本語IMEの仮想キーが押下を妨げた");
+
+            Update(1030);
+            if (Update(1100, 0xA2, 0xA0, 'K') != VoiceInputGesture.Change.None)
+                throw new Exception("指定外の実キーと同時に録音を開始した");
+            Update(1110);
+            if (Update(1200, 0xA2, 0xA0) != VoiceInputGesture.Change.Started ||
+                Update(2300, 0xA2, 0xA0, 'K') != VoiceInputGesture.Change.Discarded)
+                throw new Exception("実キーで録音が破棄されなかった");
+            return Task.CompletedTask;
+        }));
         tests.Add(("録音の主キー・左右条件の保存と再アームを確認", () =>
         {
             var shortcut = new VoiceRecordingShortcut(VoiceModifierSide.Either, VoiceModifierSide.None, VoiceModifierSide.Both, MainKey: 0x87);

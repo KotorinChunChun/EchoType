@@ -54,22 +54,27 @@ internal static class ExternalSpeechTests
             var sameEndpoint = settings with { LiveSpeech = options with { Model = "other-model" } };
             var migrated = sameEndpoint.MigrateSpeechConnections();
             Require(migrated.SpeechConnections.Length == 1 && migrated.FinalSpeech() == options &&
-                migrated.PreviewSpeech() == sameEndpoint.LiveSpeech, "同じ接続でも確定と即時表示で異なるモデルを保持");
+                migrated.PreviewSpeech() == sameEndpoint.LiveSpeech &&
+                migrated.SpeechModels.Select(item => item.Selection).SequenceEqual(new[] { migrated.FinalSelection, migrated.PreviewSelection }),
+                "同じ接続の確定と即時表示を個別にモデル一覧へ移行");
             var extra = Enumerable.Range(1, 6).Select(i => new SpeechConnection(Guid.NewGuid(), $"テスト接続{i}",
-                preview with { Model = "" }));
+                preview with { Model = "" })).ToArray();
+            var unused = new RegisteredSpeechModel(new(extra[0].Id, "unused"), "未選択でも保持するモデル");
             var next = migrated with
             {
                 SpeechConnections = [.. migrated.SpeechConnections, .. extra],
+                SpeechModels = [.. migrated.SpeechModels, unused],
                 PreviewSelection = new(SpeechConnection.WindowsDebug.Id, "")
             };
             store.SaveVoiceInputSettings(next);
             var restoredCatalog = store.LoadVoiceInputSettings().MigrateSpeechConnections();
             Require(restoredCatalog.SpeechConnections.SequenceEqual(next.SpeechConnections) &&
+                restoredCatalog.SpeechModels.SequenceEqual(next.SpeechModels) &&
                 restoredCatalog.FinalSpeech() == options && restoredCatalog.PreviewSpeech() == ExternalSpeechSettings.WindowsDebugDefault,
-                "登録済み接続とWindows標準の選択を保存・復元");
+                "登録済み接続、利用していないモデル、Windows標準の選択を保存・復元");
             store.SaveVoiceProfile(new(@"C:\test\fixture.exe", "試験", next));
             var savedProfile = store.GetVoiceProfiles().Single().Settings;
-            Require(savedProfile.SpeechConnections.Length == 0 && savedProfile.FinalSelection is null,
+            Require(savedProfile.SpeechConnections.Length == 0 && savedProfile.SpeechModels.Length == 0 && savedProfile.FinalSelection is null,
                 "アプリ別設定へ接続資格情報を保存しない");
         }
         byte[] wave = [1, 2, 3];

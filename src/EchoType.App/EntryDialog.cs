@@ -25,6 +25,7 @@ internal sealed class EntryDialog : Window
         _fields.Children.Add(box); return box;
     }
     public CheckBox Check(string label, bool value) { var box = new CheckBox { Content = label, IsChecked = value, Margin = new Thickness(0, 8, 0, 0) }; _fields.Children.Add(box); return box; }
+    public void Add(UIElement field) => _fields.Children.Add(field);
     public (Label Label, PasswordBox Box) Password(string label, string value)
     {
         var box = new PasswordBox { Password = value, MaxLength = 4096, MinHeight = 30 };

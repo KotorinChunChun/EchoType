@@ -20,10 +20,12 @@ public sealed record SpeechConnection(Guid Id, string Name, ExternalSpeechSettin
 }
 
 public sealed record SpeechSelection(Guid ConnectionId, string Model);
+public sealed record RegisteredSpeechModel(SpeechSelection Selection, string Label);
 
 public sealed partial record VoiceInputSettings
 {
     public SpeechConnection[] SpeechConnections { get; init; } = [];
+    public RegisteredSpeechModel[] SpeechModels { get; init; } = [];
     public SpeechSelection? FinalSelection { get; init; }
     public SpeechSelection? PreviewSelection { get; init; }
 
@@ -44,8 +46,14 @@ public sealed partial record VoiceInputSettings
         var connections = SpeechConnections.ToList();
         var final = FinalSelection ?? Import(ExternalSpeech, "確定の接続");
         var preview = PreviewSelection ?? Import(LiveSpeech, "即時表示の接続");
+        var models = SpeechModels.ToList();
+        foreach (var selection in new[] { final, preview }.OfType<SpeechSelection>())
+        {
+            if (connections.Any(item => item.Id == selection.ConnectionId) && models.All(item => item.Selection != selection))
+                models.Add(new(selection, selection.Model.Length == 0 ? "モデル未指定" : selection.Model));
+        }
         return this with { SpeechConnections = connections.ToArray(), FinalSelection = final, PreviewSelection = preview,
-            ExternalSpeech = new(), LiveSpeech = new() };
+            SpeechModels = models.ToArray(), ExternalSpeech = new(), LiveSpeech = new() };
 
         SpeechSelection? Import(ExternalSpeechSettings legacy, string name)
         {
@@ -64,7 +72,7 @@ public sealed partial record VoiceInputSettings
 
     public VoiceInputSettings WithoutSpeechConnections() => this with
     {
-        ExternalSpeech = new(), LiveSpeech = new(), SpeechConnections = [],
+        ExternalSpeech = new(), LiveSpeech = new(), SpeechConnections = [], SpeechModels = [],
         FinalSelection = null, PreviewSelection = null, LiveDisplayEnabled = false
     };
 

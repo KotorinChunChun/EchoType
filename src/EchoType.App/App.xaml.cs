@@ -162,15 +162,22 @@ public partial class App : Application
         var controls = VisualChildren(settings).OfType<FrameworkElement>().ToArray();
         var viewport = controls.OfType<ScrollViewer>().Single(element =>
             System.Windows.Automation.AutomationProperties.GetAutomationId(element) == "VoiceSettingsViewport");
-        var choices = controls.OfType<ComboBox>().Where(combo =>
-            System.Windows.Automation.AutomationProperties.GetAutomationId(combo) is "FinalSpeechConnection" or "PreviewSpeechConnection").ToArray();
-        var heights = controls.OfType<Button>().Where(button => button.IsVisible).Select(button => button.ActualHeight).Distinct().ToArray();
+        var rows = controls.OfType<StackPanel>().Single(element =>
+            System.Windows.Automation.AutomationProperties.GetAutomationId(element) == "RegisteredSpeechModels");
+        var choices = VisualChildren(rows).OfType<RadioButton>().ToArray();
+        var buttons = controls.OfType<Button>().Where(button => button.IsVisible).ToArray();
+        var sizes = buttons.Select(button => (button.ActualWidth, button.ActualHeight)).Distinct().ToArray();
+        RadioButton Choice(string role, string model) => choices.Single(choice => choice.GroupName == role &&
+            choice.Tag is EchoType.Core.SpeechSelection selection && selection.Model == model);
         if (!settings.IsVisible || viewport.Content is not Grid { ColumnDefinitions.Count: 3 } ||
             viewport.ViewportHeight >= 450 && viewport.ScrollableHeight > 1 ||
-            choices.Length != 2 || choices.Any(combo => combo.Items.Count < 3 || combo.SelectedIndex < 2) ||
-            heights is not [32])
-            throw new InvalidOperationException($"設定画面の3列、既存接続の選択、スクロール、ボタンの高さを確認できません（画面 {viewport.ViewportHeight:F1}px / 縦スクロール {viewport.ScrollableHeight:F1}px）。");
-        Console.WriteLine($"設定の3列・同じボタン高・確定と即時表示への接続移行を確認 / 縦スクロール {viewport.ScrollableHeight:F1}px");
+            choices.Length != 8 || Choice("確定", "fixture-final").IsChecked != true ||
+            Choice("即時表示", "fixture-live").IsChecked != true || sizes is not [(112, 32)])
+            throw new InvalidOperationException($"モデル一覧・既存設定・ボタン寸法を確認できません（画面 {viewport.ViewportHeight:F1}px / 縦スクロール {viewport.ScrollableHeight:F1}px）。");
+        Choice("確定", "fixture-live").IsChecked = true;
+        if (Choice("確定", "fixture-final").IsChecked != false || Choice("即時表示", "fixture-live").IsChecked != true)
+            throw new InvalidOperationException("同じ一覧で確定と即時表示を個別に選べません。");
+        Console.WriteLine($"設定の3列・ボタン112×32・既存モデルの引継ぎと個別選択を確認 / 縦スクロール {viewport.ScrollableHeight:F1}px");
         settings.Close();
         window.Close();
         if (window.IsVisible) throw new InvalidOperationException("閉じる操作で格納できません。");

@@ -1,237 +1,358 @@
 using EchoType.Core;
 using EchoType.Windows;
+using System.Windows.Automation;
+using System.Windows.Media;
 
 namespace EchoType.App;
 
 public sealed partial class VoiceInputSettingsWindow
 {
-    private enum ConnectionKind { TranscriptionServer, SpeechCpp, ExternalServer, ExternalApi }
-
     private Func<VoiceInputSettings, VoiceInputSettings> AddSpeechSettings(Panel column, VoiceInputSettings settings)
     {
         var connections = settings.SpeechConnections.ToList();
-        var manage = new ComboBox { DisplayMemberPath = nameof(SpeechConnection.Name), SelectedValuePath = nameof(SpeechConnection.Id), MinHeight = 30 };
-        AddLabel(column, "登録済みの接続", manage);
-        var actions = new WrapPanel { Margin = new Thickness(0, 4, 0, 2) };
+        var models = settings.SpeechModels.ToList();
+        var final = settings.FinalSelection;
+        var preview = settings.PreviewSelection;
+        var live = new CheckBox { Content = "即時表示を有効にする", IsChecked = settings.LiveDisplayEnabled, Margin = new Thickness(0, 4, 0, 6) };
+        column.Children.Add(live);
+
+        Grid Row()
+        {
+            var grid = new Grid { MinHeight = 28 };
+            grid.ColumnDefinitions.Add(new() { Width = new GridLength(1.5, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new() { Width = new GridLength(40) });
+            grid.ColumnDefinitions.Add(new() { Width = new GridLength(64) });
+            return grid;
+        }
+        void Cell(Grid grid, int index, UIElement element)
+        {
+            Grid.SetColumn(element, index);
+            grid.Children.Add(element);
+        }
+        TextBlock Caption(string text, bool header = false, bool center = false) => new()
+        {
+            Text = text, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = center ? new Thickness(0) : new Thickness(6, 0, 4, 0),
+            TextAlignment = center ? TextAlignment.Center : TextAlignment.Left,
+            FontWeight = header ? FontWeights.SemiBold : FontWeights.Normal, ToolTip = text
+        };
+        var headings = Row();
+        headings.Background = Brushes.WhiteSmoke;
+        Cell(headings, 0, Caption("登録済みモデル", header: true));
+        Cell(headings, 1, Caption("接続名", header: true));
+        Cell(headings, 2, Caption("確定", header: true, center: true));
+        Cell(headings, 3, Caption("即時表示", header: true, center: true));
+        column.Children.Add(headings);
+
+        var rows = new StackPanel();
+        AutomationProperties.SetAutomationId(rows, "RegisteredSpeechModels");
+        var scroll = new ScrollViewer { Content = rows, MinHeight = 106, MaxHeight = 290, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        scroll.ScrollChanged += (_, _) => headings.Margin = new Thickness(1, 0,
+            scroll.ComputedVerticalScrollBarVisibility == Visibility.Visible ? 1 + SystemParameters.VerticalScrollBarWidth : 1, 0);
+        column.Children.Add(new Border { Child = scroll, BorderBrush = Brushes.LightGray, BorderThickness = new Thickness(1) });
+        var actions = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
         column.Children.Add(actions);
-        var add = SettingsButton("追加");
-        var edit = SettingsButton("編集");
-        var remove = SettingsButton("削除");
-        foreach (var button in new[] { add, edit, remove })
-        {
-            button.Margin = new Thickness(0, 0, 4, 2);
-            actions.Children.Add(button);
-        }
-        manage.SelectionChanged += (_, _) => edit.IsEnabled = remove.IsEnabled = manage.SelectedItem is SpeechConnection;
-        var final = AddSpeechRole(column, "確定", settings.FinalSelection, connections);
-        var liveEnabled = new CheckBox { Content = "即時表示", IsChecked = settings.LiveDisplayEnabled, Margin = new Thickness(0, 6, 0, 0) };
-        column.Children.Add(liveEnabled);
-        var preview = AddSpeechRole(column, "即時表示", settings.PreviewSelection, connections);
-        void UpdatePreview() => preview.Panel.Visibility = liveEnabled.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        liveEnabled.Checked += (_, _) => UpdatePreview();
-        liveEnabled.Unchecked += (_, _) => UpdatePreview();
-        UpdatePreview();
-
-        void Refresh(Guid? selected)
-        {
-            manage.ItemsSource = connections.ToArray();
-            manage.SelectedValue = selected;
-            edit.IsEnabled = remove.IsEnabled = manage.SelectedItem is SpeechConnection;
-            final.Refresh(); preview.Refresh();
-        }
-        void OpenEditor(SpeechConnection? original)
-        {
-            TextBox name = null!, endpoint = null!;
-            ComboBox kind = null!;
-            PasswordBox key = null!;
-            SpeechConnection? updated = null;
-            var id = original?.Id ?? Guid.NewGuid();
-            string Label(ConnectionKind value) => value switch
-            {
-                ConnectionKind.TranscriptionServer => "TranscriptionServer",
-                ConnectionKind.SpeechCpp => "speech.cpp",
-                ConnectionKind.ExternalServer => "外部サーバー（APIキーなし）",
-                _ => "外部API（APIキーあり）"
-            };
-            var modes = Enum.GetValues<ConnectionKind>().ToDictionary(Label);
-            var current = original?.Settings.Mode switch
-            {
-                ExternalSpeechMode.SpeechCpp => ConnectionKind.SpeechCpp,
-                ExternalSpeechMode.Server => ConnectionKind.ExternalServer,
-                ExternalSpeechMode.ApiKey => ConnectionKind.ExternalApi,
-                _ => ConnectionKind.TranscriptionServer
-            };
-            var dialog = new EntryDialog(this, original is null ? "接続の追加" : "接続の編集", () =>
-            {
-                var mode = modes[(string)kind.SelectedItem] switch
-                {
-                    ConnectionKind.TranscriptionServer => ExternalSpeechMode.TranscriptionServer,
-                    ConnectionKind.SpeechCpp => ExternalSpeechMode.SpeechCpp,
-                    ConnectionKind.ExternalServer => ExternalSpeechMode.Server,
-                    _ => ExternalSpeechMode.ApiKey
-                };
-                updated = new(id, name.Text.Trim(), new()
-                {
-                    Mode = mode, Endpoint = endpoint.Text.Trim(), ApiKey = mode == ExternalSpeechMode.ApiKey ? key.Password : ""
-                });
-                updated.Validate();
-            }) { Height = 340 };
-            name = dialog.Text("接続名", original?.Name ?? "");
-            kind = dialog.Choice("接続方式", modes.Keys, Label(current));
-            endpoint = dialog.Text("文字起こしAPIのURL", original?.Settings.Endpoint ?? ExternalSpeechSettings.TranscriptionServerDefault.Endpoint, 2048);
-            var password = dialog.Password("APIキー", original?.Settings.ApiKey ?? "");
-            key = password.Box;
-            void UpdateKey() => key.Visibility = password.Label.Visibility =
-                modes[(string)kind.SelectedItem] == ConnectionKind.ExternalApi ? Visibility.Visible : Visibility.Collapsed;
-            kind.SelectionChanged += (_, _) =>
-            {
-                var next = modes[(string)kind.SelectedItem];
-                var previousDefault = DefaultUrl(current);
-                if (endpoint.Text.Length == 0 || endpoint.Text == previousDefault) endpoint.Text = DefaultUrl(next);
-                current = next;
-                UpdateKey();
-            };
-            string DefaultUrl(ConnectionKind value) => value switch
-            {
-                ConnectionKind.TranscriptionServer => ExternalSpeechSettings.TranscriptionServerDefault.Endpoint,
-                ConnectionKind.SpeechCpp => ExternalSpeechSettings.SpeechCppDefault.Endpoint,
-                _ => ""
-            };
-            UpdateKey();
-            if (dialog.ShowDialog() != true || updated is null) return;
-            if (original is null) connections.Add(updated);
-            else connections[connections.IndexOf(original)] = updated;
-            Refresh(updated.Id);
-        }
-        add.Click += (_, _) => OpenEditor(null);
-        edit.Click += (_, _) => { if (manage.SelectedItem is SpeechConnection selected) OpenEditor(selected); };
-        remove.Click += (_, _) =>
-        {
-            if (manage.SelectedItem is not SpeechConnection selected) return;
-            connections.Remove(selected);
-            Refresh(null);
-        };
-        Refresh(connections.FirstOrDefault()?.Id);
-        return source => source with
-        {
-            ExternalSpeech = new(), LiveSpeech = new(), SpeechConnections = connections.ToArray(),
-            FinalSelection = final.Read(), PreviewSelection = preview.Read(), LiveDisplayEnabled = liveEnabled.IsChecked == true
-        };
-    }
-
-    private (StackPanel Panel, Func<SpeechSelection?> Read, Action Refresh) AddSpeechRole(
-        Panel column, string name, SpeechSelection? initial, List<SpeechConnection> connections)
-    {
-        var fields = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
-        column.Children.Add(fields);
-        var choice = new ComboBox { DisplayMemberPath = nameof(SpeechConnection.Name), SelectedValuePath = nameof(SpeechConnection.Id), MinHeight = 30 };
-        System.Windows.Automation.AutomationProperties.SetAutomationId(choice, name == "確定" ? "FinalSpeechConnection" : "PreviewSpeechConnection");
-        AddLabel(fields, name + "の接続", choice);
-        var model = new TextBox { MaxLength = 200, MinHeight = 28 };
-        var modelLabel = AddLabel(fields, name + "モデル", model);
-        var modelList = new ComboBox { DisplayMemberPath = nameof(TranscriptionModel.Label), SelectedValuePath = nameof(TranscriptionModel.Id), MinHeight = 28 };
-        fields.Children.Add(modelList);
-        var buttons = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
-        var refresh = SettingsButton("モデル一覧を更新");
-        var check = SettingsButton("接続テスト");
-        refresh.Margin = new Thickness(0, 0, 4, 2);
-        buttons.Children.Add(refresh); buttons.Children.Add(check); fields.Children.Add(buttons);
+        var manage = SettingsButton("接続・モデル管理");
+        var checkFinal = SettingsButton("確定をテスト");
+        var checkPreview = SettingsButton("即時表示をテスト");
+        foreach (var button in new[] { manage, checkFinal, checkPreview }) actions.Children.Add(button);
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap };
-        fields.Children.Add(status);
-        var current = initial?.ConnectionId ?? Guid.Empty;
-        var selections = new Dictionary<Guid, string>();
-        if (initial is not null) selections[initial.ConnectionId] = initial.Model;
+        column.Children.Add(status);
         CancellationTokenSource? pending = null;
-        var updating = false;
-        SpeechConnection? Selected() => choice.SelectedItem as SpeechConnection is { } item && item.Id != Guid.Empty ? item : null;
-        bool UsesList() => Selected()?.Settings.Mode == ExternalSpeechMode.TranscriptionServer;
-        string ReadModel() => UsesList() ? modelList.SelectedValue as string ?? "" : model.Text.Trim();
-        SpeechSelection? Read() => Selected() is { } selected ? new(selected.Id, ReadModel()) : null;
-        void CancelRequest() { pending?.Cancel(); pending = null; }
-        void ShowFields()
+
+        void UpdateTests()
         {
-            CancelRequest();
-            status.Text = "";
-            var selected = Selected();
-            var editable = selected is not null && selected.Id != SpeechConnection.WindowsDebug.Id;
-            modelLabel.Visibility = editable ? Visibility.Visible : Visibility.Collapsed;
-            model.Visibility = editable && !UsesList() ? Visibility.Visible : Visibility.Collapsed;
-            modelList.Visibility = refresh.Visibility = UsesList() ? Visibility.Visible : Visibility.Collapsed;
-            check.Visibility = selected is not null ? Visibility.Visible : Visibility.Collapsed;
-            modelLabel.Target = UsesList() ? modelList : model;
-            var saved = selections.GetValueOrDefault(current, "");
-            model.Text = saved;
-            modelList.ItemsSource = saved.Length == 0 ? [] : new[] { new TranscriptionModel(saved, saved) };
-            modelList.SelectedValue = saved;
+            checkFinal.IsEnabled = pending is null && final is not null;
+            checkPreview.IsEnabled = pending is null && preview is not null;
         }
-        async Task RunRequestAsync(bool list)
+        void AddRow(string label, string connection, SpeechSelection? selection)
         {
-            if (!fields.IsVisible || Selected() is not { } selected || list && !UsesList()) return;
-            CancelRequest();
-            using var request = new CancellationTokenSource(TimeSpan.FromSeconds(list ? 8 : 15));
-            pending = request;
-            var requested = selected.Settings with { Model = ReadModel() };
-            status.Text = list ? "モデル一覧を取得中…" : "確認中…";
-            try
+            var row = Row();
+            if (rows.Children.Count % 2 == 1) row.Background = Brushes.WhiteSmoke;
+            rows.Children.Add(row);
+            Cell(row, 0, Caption(label));
+            Cell(row, 1, Caption(connection));
+            AddRole(2, "確定", final, value => final = value);
+            AddRole(3, "即時表示", preview, value => preview = value);
+
+            void AddRole(int index, string role, SpeechSelection? current, Action<SpeechSelection?> set)
             {
-                if (list)
+                var button = new RadioButton
                 {
-                    var models = await ExternalSpeechRecognizer.ListTranscriptionModelsAsync(requested, request.Token);
-                    if (pending != request) return;
-                    var modelId = ReadModel();
-                    var missing = modelId.Length > 0 && models.All(item => item.Id != modelId);
-                    if (missing) models = [.. models, new(modelId, $"{modelId}（現在の一覧にありません）")];
-                    modelList.ItemsSource = models;
-                    modelList.SelectedValue = modelId;
-                    status.Text = missing ? "選択したモデルが一覧にありません。" :
-                        models.Length == 0 ? "選択できる文字起こしモデルがありません。" : "";
-                }
-                else
-                {
-                    var message = await ExternalSpeechRecognizer.CheckAsync(requested, request.Token);
-                    if (pending == request) status.Text = message;
-                }
+                    GroupName = role, Tag = selection, IsChecked = current == selection,
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = string.IsNullOrEmpty(connection) ? $"{role} / {label}" : $"{role} / {label} / {connection} / {selection?.Model}"
+                };
+                AutomationProperties.SetName(button, $"{role} {label} {connection}".TrimEnd());
+                button.Checked += (_, _) => { set(selection); status.Text = ""; UpdateTests(); };
+                Cell(row, index, button);
             }
-            catch (OperationCanceledException) { if (pending == request) status.Text = "確認がタイムアウトしました。"; }
-            catch (Exception ex) { if (pending == request) status.Text = ex.Message; }
-            finally { if (pending == request) pending = null; }
         }
-        choice.SelectionChanged += async (_, _) =>
-        {
-            if (updating) return;
-            if (current != Guid.Empty)
-                selections[current] = modelList.Visibility == Visibility.Visible ? modelList.SelectedValue as string ?? "" : model.Text.Trim();
-            current = Selected()?.Id ?? Guid.Empty;
-            ShowFields();
-            await RunRequestAsync(list: true);
-        };
-        fields.IsVisibleChanged += async (_, _) =>
-        {
-            if (fields.IsVisible) await RunRequestAsync(list: true);
-            else CancelRequest();
-        };
-        refresh.Click += async (_, _) => await RunRequestAsync(list: true);
-        check.Click += async (_, _) => await RunRequestAsync(list: false);
-        Closed += (_, _) => CancelRequest();
         void Refresh()
         {
-            if (Selected() is not null) selections[current] = ReadModel();
-            updating = true;
-            choice.ItemsSource = new[] { new SpeechConnection(Guid.Empty, "未選択", new()), SpeechConnection.WindowsDebug }.Concat(connections).ToArray();
-            if (current != SpeechConnection.WindowsDebug.Id && connections.All(item => item.Id != current)) current = Guid.Empty;
-            choice.SelectedValue = current;
-            updating = false;
-            ShowFields();
-            _ = RunRequestAsync(list: true);
+            rows.Children.Clear();
+            foreach (var connection in connections)
+                foreach (var model in models.Where(model => model.Selection.ConnectionId == connection.Id))
+                    AddRow(model.Label, connection.Name, model.Selection);
+            AddRow(SpeechConnection.WindowsDebug.Name, "Windows", new(SpeechConnection.WindowsDebug.Id, ""));
+            AddRow("未選択", "", null);
+            UpdateTests();
         }
-        return (fields, Read, Refresh);
+        async Task CheckAsync(SpeechSelection? selection)
+        {
+            if (selection is null || pending is not null) return;
+            using var request = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            pending = request;
+            UpdateTests();
+            status.Text = "接続を確認中…";
+            try
+            {
+                var connection = selection.ConnectionId == SpeechConnection.WindowsDebug.Id
+                    ? SpeechConnection.WindowsDebug : connections.Single(item => item.Id == selection.ConnectionId);
+                var model = connection.Id == SpeechConnection.WindowsDebug.Id ? connection.Settings : connection.Settings with { Model = selection.Model };
+                var result = await ExternalSpeechRecognizer.CheckAsync(model, request.Token);
+                if (pending == request) status.Text = result;
+            }
+            catch (OperationCanceledException) { if (pending == request) status.Text = "接続確認がタイムアウトしました。"; }
+            catch (Exception ex) { if (pending == request) status.Text = ex.Message; }
+            finally
+            {
+                if (pending == request) pending = null;
+                UpdateTests();
+            }
+        }
+
+        manage.Click += (_, _) =>
+        {
+            if (!EditSpeechConnections(connections, models)) return;
+            if (final is not null && final.ConnectionId != SpeechConnection.WindowsDebug.Id && models.All(item => item.Selection != final)) final = null;
+            if (preview is not null && preview.ConnectionId != SpeechConnection.WindowsDebug.Id && models.All(item => item.Selection != preview)) preview = null;
+            status.Text = "";
+            Refresh();
+        };
+        checkFinal.Click += async (_, _) => await CheckAsync(final);
+        checkPreview.Click += async (_, _) => await CheckAsync(preview);
+        Closed += (_, _) => { pending?.Cancel(); pending = null; };
+        Refresh();
+        return source =>
+        {
+            if (live.IsChecked == true && preview is null) throw new InvalidOperationException("即時表示用のモデルを選んでください。");
+            return source with
+            {
+                ExternalSpeech = new(), LiveSpeech = new(), SpeechConnections = connections.ToArray(), SpeechModels = models.ToArray(),
+                FinalSelection = final, PreviewSelection = preview, LiveDisplayEnabled = live.IsChecked == true
+            };
+        };
     }
 
-    private static Label AddLabel(Panel panel, string text, Control target)
+    private bool EditSpeechConnections(List<SpeechConnection> connections, List<RegisteredSpeechModel> models)
     {
-        var label = new Label { Content = text, Target = target, Padding = new Thickness(0, 2, 0, 2) };
-        panel.Children.Add(label);
-        panel.Children.Add(target);
-        return label;
+        var editedConnections = connections.ToList();
+        var editedModels = models.ToList();
+        var dialog = new EntryDialog(this, "接続・モデル管理", () => { }) { Height = 400 };
+        var list = new ListBox
+        {
+            DisplayMemberPath = nameof(SpeechConnection.Name), MinHeight = 160, MaxHeight = 220,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        dialog.Add(new TextBlock { Text = "登録済みの接続", Margin = new Thickness(0, 0, 0, 4) });
+        dialog.Add(list);
+        var actions = new WrapPanel();
+        dialog.Add(actions);
+        var add = SettingsButton("接続を追加");
+        var edit = SettingsButton("接続・モデル編集");
+        var remove = SettingsButton("接続を削除");
+        foreach (var button in new[] { add, edit, remove }) actions.Children.Add(button);
+        void Refresh(SpeechConnection? selected)
+        {
+            list.ItemsSource = editedConnections.ToArray();
+            list.SelectedItem = selected;
+            edit.IsEnabled = remove.IsEnabled = selected is not null;
+        }
+        void Open(SpeechConnection? selected)
+        {
+            var currentModels = editedModels.Where(model => model.Selection.ConnectionId == selected?.Id).ToList();
+            var updated = EditSpeechConnection(dialog, selected, currentModels);
+            if (updated is null) return;
+            if (selected is null) editedConnections.Add(updated);
+            else editedConnections[editedConnections.IndexOf(selected)] = updated;
+            editedModels.RemoveAll(model => model.Selection.ConnectionId == updated.Id);
+            editedModels.AddRange(currentModels);
+            Refresh(updated);
+        }
+        list.SelectionChanged += (_, _) => edit.IsEnabled = remove.IsEnabled = list.SelectedItem is SpeechConnection;
+        add.Click += (_, _) => Open(null);
+        edit.Click += (_, _) => { if (list.SelectedItem is SpeechConnection selected) Open(selected); };
+        remove.Click += (_, _) =>
+        {
+            if (list.SelectedItem is not SpeechConnection selected) return;
+            editedConnections.Remove(selected);
+            editedModels.RemoveAll(model => model.Selection.ConnectionId == selected.Id);
+            Refresh(editedConnections.FirstOrDefault());
+        };
+        Refresh(editedConnections.FirstOrDefault());
+        if (dialog.ShowDialog() != true) return false;
+        connections.Clear();
+        connections.AddRange(editedConnections);
+        models.Clear();
+        models.AddRange(editedModels);
+        return true;
     }
+
+    private static SpeechConnection? EditSpeechConnection(Window owner, SpeechConnection? original, List<RegisteredSpeechModel> models)
+    {
+        var modes = new Dictionary<string, ExternalSpeechMode>
+        {
+            ["TranscriptionServer"] = ExternalSpeechMode.TranscriptionServer,
+            ["speech.cpp"] = ExternalSpeechMode.SpeechCpp,
+            ["外部サーバー（APIキーなし）"] = ExternalSpeechMode.Server,
+            ["外部API（APIキーあり）"] = ExternalSpeechMode.ApiKey
+        };
+        var id = original?.Id ?? Guid.NewGuid();
+        var mode = original is not null && modes.ContainsValue(original.Settings.Mode)
+            ? original.Settings.Mode : ExternalSpeechMode.TranscriptionServer;
+        TextBox name = null!, endpoint = null!;
+        PasswordBox key = null!;
+        SpeechConnection? updated = null;
+        ExternalSpeechSettings Read() => new()
+        {
+            Mode = mode, Endpoint = endpoint.Text.Trim(), ApiKey = mode == ExternalSpeechMode.ApiKey ? key.Password : ""
+        };
+        var dialog = new EntryDialog(owner, original is null ? "接続の追加" : "接続・モデルの編集", () =>
+        {
+            updated = new(id, name.Text.Trim(), Read());
+            updated.Validate();
+        });
+        name = dialog.Text("接続名", original?.Name ?? "");
+        var kind = dialog.Choice("接続方式", modes.Keys, modes.First(item => item.Value == mode).Key);
+        endpoint = dialog.Text("文字起こしAPIのURL", original?.Settings.Endpoint ?? DefaultUrl(mode), 2048);
+        var password = dialog.Password("APIキー", original?.Settings.ApiKey ?? "");
+        key = password.Box;
+        var fields = new StackPanel();
+        dialog.Add(fields);
+        var list = new ListBox
+        {
+            DisplayMemberPath = nameof(RegisteredSpeechModel.Label), MinHeight = 58, MaxHeight = 94,
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        AutomationProperties.SetName(list, "この接続の登録済みモデル");
+        fields.Children.Add(new TextBlock { Text = "この接続の登録済みモデル", Margin = new Thickness(0, 4, 0, 3) });
+        fields.Children.Add(list);
+        var remove = SettingsButton("モデルを削除");
+        fields.Children.Add(remove);
+        var available = new ComboBox { MinHeight = 28, DisplayMemberPath = nameof(TranscriptionModel.Label), ToolTip = "サーバーから取得したモデル" };
+        var manual = new TextBox { MaxLength = 200, MinHeight = 28, Margin = new Thickness(0), Padding = new Thickness(6, 4, 6, 4), ToolTip = "APIに送るモデル名" };
+        fields.Children.Add(new TextBlock { Text = "追加するモデル", Margin = new Thickness(0, 3, 0, 3) });
+        fields.Children.Add(available);
+        fields.Children.Add(manual);
+        var actions = new WrapPanel { Margin = new Thickness(0, 5, 0, 0) };
+        fields.Children.Add(actions);
+        var refresh = SettingsButton("モデル一覧を取得");
+        var add = SettingsButton("モデルを登録");
+        actions.Children.Add(refresh);
+        actions.Children.Add(add);
+        var status = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        fields.Children.Add(status);
+        CancellationTokenSource? pending = null;
+
+        void UpdateList(RegisteredSpeechModel? selected)
+        {
+            list.ItemsSource = models.ToArray();
+            list.SelectedItem = selected;
+            remove.IsEnabled = selected is not null;
+        }
+        void ClearAvailable()
+        {
+            pending?.Cancel();
+            pending = null;
+            available.ItemsSource = null;
+            refresh.IsEnabled = true;
+            status.Text = "";
+        }
+        void UpdateMode()
+        {
+            var serverList = mode == ExternalSpeechMode.TranscriptionServer;
+            available.Visibility = refresh.Visibility = serverList ? Visibility.Visible : Visibility.Collapsed;
+            manual.Visibility = serverList ? Visibility.Collapsed : Visibility.Visible;
+            password.Box.Visibility = password.Label.Visibility = mode == ExternalSpeechMode.ApiKey ? Visibility.Visible : Visibility.Collapsed;
+            UpdateAdd();
+        }
+        void UpdateAdd() => add.IsEnabled = mode == ExternalSpeechMode.TranscriptionServer
+            ? available.SelectedItem is TranscriptionModel : !string.IsNullOrWhiteSpace(manual.Text);
+        kind.SelectionChanged += (_, _) =>
+        {
+            var next = modes[(string)kind.SelectedItem];
+            if (endpoint.Text.Length == 0 || endpoint.Text == DefaultUrl(mode)) endpoint.Text = DefaultUrl(next);
+            mode = next;
+            ClearAvailable();
+            UpdateMode();
+        };
+        endpoint.TextChanged += (_, _) => ClearAvailable();
+        available.SelectionChanged += (_, _) => UpdateAdd();
+        manual.TextChanged += (_, _) => UpdateAdd();
+        list.SelectionChanged += (_, _) => remove.IsEnabled = list.SelectedItem is RegisteredSpeechModel;
+        remove.Click += (_, _) =>
+        {
+            if (list.SelectedItem is not RegisteredSpeechModel model) return;
+            models.Remove(model);
+            UpdateList(models.FirstOrDefault());
+        };
+        add.Click += (_, _) =>
+        {
+            var candidate = mode == ExternalSpeechMode.TranscriptionServer
+                ? (TranscriptionModel?)available.SelectedItem : new(manual.Text.Trim(), manual.Text.Trim());
+            if (candidate is null) return;
+            if (candidate.Id.Length is 0 or > 200 || candidate.Id.Any(char.IsControl))
+            {
+                status.Text = "モデル名を確認してください。";
+                return;
+            }
+            var selection = new SpeechSelection(id, candidate.Id);
+            if (models.FirstOrDefault(item => item.Selection == selection) is { } existing)
+            {
+                UpdateList(existing);
+                status.Text = "このモデルは登録済みです。";
+                return;
+            }
+            var model = new RegisteredSpeechModel(selection, candidate.Label);
+            models.Add(model);
+            UpdateList(model);
+            manual.Clear();
+            status.Text = "";
+        };
+        async Task LoadModelsAsync()
+        {
+            ClearAvailable();
+            using var request = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            pending = request;
+            refresh.IsEnabled = false;
+            status.Text = "モデル一覧を取得中…";
+            try
+            {
+                var fetched = await ExternalSpeechRecognizer.ListTranscriptionModelsAsync(Read(), request.Token);
+                if (pending != request) return;
+                available.ItemsSource = fetched;
+                available.SelectedIndex = fetched.Length == 1 ? 0 : -1;
+                status.Text = fetched.Length == 0 ? "選択できる文字起こしモデルがありません。" : "";
+            }
+            catch (OperationCanceledException) { if (pending == request) status.Text = "モデル一覧の取得がタイムアウトしました。"; }
+            catch (Exception ex) { if (pending == request) status.Text = ex.Message; }
+            finally { if (pending == request) { pending = null; refresh.IsEnabled = true; } }
+        }
+        refresh.Click += async (_, _) => await LoadModelsAsync();
+        if (original?.Settings.Mode == ExternalSpeechMode.TranscriptionServer)
+            dialog.Loaded += async (_, _) => await LoadModelsAsync();
+        dialog.Closed += (_, _) => ClearAvailable();
+        UpdateMode();
+        UpdateList(models.FirstOrDefault());
+        return dialog.ShowDialog() == true ? updated : null;
+    }
+
+    private static string DefaultUrl(ExternalSpeechMode mode) => mode switch
+    {
+        ExternalSpeechMode.TranscriptionServer => ExternalSpeechSettings.TranscriptionServerDefault.Endpoint,
+        ExternalSpeechMode.SpeechCpp => ExternalSpeechSettings.SpeechCppDefault.Endpoint,
+        _ => ""
+    };
 }

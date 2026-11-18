@@ -3,6 +3,7 @@ using EchoType.Windows;
 using System.Runtime.InteropServices;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace EchoType.App;
 
@@ -17,6 +18,8 @@ public partial class VoiceInputWindow : Window
     private readonly VoiceTargetOutline _outline = new();
     private VoiceInputTarget? _highlightTarget;
     private AudioMeter _displayMeter = new(0, 0, []);
+    private readonly DispatcherTimer _liveTextTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private string _lastLiveText = "";
     public VoiceInputWindow(VoiceInputController controller, VoiceInputSettings settings)
     {
         InitializeComponent(); _controller = controller;
@@ -55,7 +58,12 @@ public partial class VoiceInputWindow : Window
             if (IsVisible) ShowAutomaticSettings(_controller.Settings);
             _outline.SetTarget(IsVisible ? _highlightTarget : null);
         };
-        Closed += (_, _) => _outline.Dispose();
+        _liveTextTimer.Tick += (_, _) =>
+        {
+            _liveTextTimer.Stop();
+            LiveText.Clear();
+        };
+        Closed += (_, _) => { _liveTextTimer.Stop(); _outline.Dispose(); };
         foreach (var group in new FrameworkElement[] { TargetGroup, CapturePanel, ComparisonViewport, DraftGroup, DraftActions, StatusText })
             group.SizeChanged += (_, _) => UpdateMinimumLayoutHeight();
     }
@@ -133,14 +141,21 @@ public partial class VoiceInputWindow : Window
         UpdateConfirm();
     }
     public void BindLog(System.Collections.IEnumerable? entries) { if (!ReferenceEquals(QueueLog.ItemsSource, entries)) QueueLog.ItemsSource = entries; }
-    public void ShowLive(string text, bool final)
+    public void ShowLive(string text)
     {
-        LiveText.Text = text;
         if (text.Length > 0) LiveLabel.Text = "即時表示  " + _controller.Settings.PreviewSpeech().Model;
+        // 同じ認識結果が録音終了時などに届いても、表示期限を延長しない。
+        if (text == _lastLiveText) return;
+        _lastLiveText = text;
+        LiveText.Text = text;
+        _liveTextTimer.Stop();
+        if (text.Length > 0) _liveTextTimer.Start();
     }
     public void ShowLiveError(string message) => LiveLabel.Text = $"即時表示  {_controller.Settings.PreviewSpeech().Model}  {message}";
     public void ResetLive()
     {
+        _liveTextTimer.Stop();
+        _lastLiveText = "";
         LiveText.Clear();
         LiveLabel.Text = "即時表示  " + _controller.Settings.PreviewSpeech().Model;
     }

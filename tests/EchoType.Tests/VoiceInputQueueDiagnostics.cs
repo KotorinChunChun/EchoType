@@ -108,6 +108,21 @@ internal static class VoiceInputQueueDiagnostics
                     await controller.RetryRecognitionAsync(failed);
                     Require(editor.Text == "途中確定3\r\n最終行" && editor.CaretIndex == "途中確定3".Length &&
                         calls[3] == 2 && liveStarts == 1, "再試行した認識結果を途中に入れ、カーソルは挿入直後に残す");
+                    var liveText = (TextBox)voiceWindow.FindName("LiveText");
+                    var liveLabel = (TextBlock)voiceWindow.FindName("LiveLabel");
+                    voiceWindow.ShowLive("更新前");
+                    await Task.Delay(3000);
+                    voiceWindow.ShowLive("更新後");
+                    await Task.Delay(2300);
+                    Require(liveText.Text == "更新後", "即時表示の文字が変わると表示時間を数え直す");
+                    await Until(() => liveText.Text.Length == 0);
+                    voiceWindow.ShowLive("更新後");
+                    Require(liveText.Text.Length == 0 && liveLabel.Text.Contains("fixture-live") &&
+                        editor.Text == "途中確定3\r\n最終行" && failed.LiveText == "途中3",
+                        "5秒で即時表示の文字だけを消し、同じ結果は再表示しない");
+                    voiceWindow.ResetLive();
+                    voiceWindow.ShowLive("更新後");
+                    Require(liveText.Text == "更新後", "新しい録音では同じ認識結果も表示する");
                     await Record(4, true);
                     await Until(() => calls.GetValueOrDefault(4) == 1);
                     var files = grid.Items.Cast<VoiceInputLogEntry>().Select(e => e.CachePath).ToArray();

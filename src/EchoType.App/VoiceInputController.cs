@@ -274,7 +274,7 @@ public sealed partial class VoiceInputController
             live.Updated += text => _dispatcher.BeginInvoke(() =>
             {
                 if (!Current(session) || !ReferenceEquals(_recording, recording)) return;
-                entry.LiveText = text; entry.Changed(); _window?.ShowLive(text, false);
+                entry.LiveText = text; entry.Changed(); _window?.ShowLive(text);
             });
             if (live is VoiceInputAccurateLive preview) preview.Failed += error => _dispatcher.BeginInvoke(() =>
             {
@@ -312,7 +312,7 @@ public sealed partial class VoiceInputController
         finally
         {
             if (Current(recording.Session) && version == _targetCaptureVersion && VoiceInputTarget.IsOwnOrExpectedForeground(stamp.Window))
-            { Open(); _window!.ShowLive(recording.Entry.LiveText, _capture is null); if (_capture is not null) SayRecording(recording.Entry); }
+            { Open(); _window!.ShowLive(recording.Entry.LiveText); if (_capture is not null) SayRecording(recording.Entry); }
             if (version == _targetCaptureVersion) { _automaticTargetPending = false; TryAutomaticInput(); }
         }
     }
@@ -321,7 +321,7 @@ public sealed partial class VoiceInputController
         var recording = _recording; if (recording is null) return;
         _recording = null; _capture = null;
         recording.Entry.Status = keep ? "音声確定中" : "破棄中"; recording.Entry.Changed();
-        _window?.ShowLive(recording.Entry.LiveText, true);
+        _window?.ShowLive(recording.Entry.LiveText);
         // StopAsyncは最初のawaitまでに入力受付を止める。次の録音は別のIWaveInで受け付ける。
         Track(FinishRecordingAsync(recording, keep)); RefreshState();
     }
@@ -347,7 +347,7 @@ public sealed partial class VoiceInputController
             entry.LiveText = live.Text; entry.LiveError = live.Error;
             if (_recording is null && ReferenceEquals(session.Entries.LastOrDefault(), entry))
             {
-                _window?.ShowLive(live.Text, true);
+                _window?.ShowLive(live.Text);
                 if (live.Error.Length > 0) _window?.ShowLiveError(live.Error);
             }
         }
@@ -611,7 +611,7 @@ public sealed partial class VoiceInputController
         {
             try { session.Cache.Dispose(); } catch (Exception ex) { Say("一時音声の削除に失敗しました: " + ex.Message); }
         }
-        _window?.BindLog(null); _window?.ShowLive("", false);
+        _window?.BindLog(null); _window?.ShowLive("");
         _target = null; _loadedTarget = null; _placedTarget = null;
         if (_lastExternal?.Consumed == true) _lastExternal = null;
         _window?.ResetSession(); RefreshState();

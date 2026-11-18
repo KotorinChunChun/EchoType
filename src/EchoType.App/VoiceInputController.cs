@@ -42,6 +42,7 @@ public sealed partial class VoiceInputController
     private CancellationTokenSource? _operation;
     private Task _work = Task.CompletedTask;
     private VoiceInputTarget.FocusStamp _lastExternalFocus;
+    private VoiceInputTarget.FocusStamp _recordingOrigin;
     private bool _busy, _stopping, _sessionLocked;
     private WaveOutEvent? _playback;
     private WaveFileReader? _playReader;
@@ -115,6 +116,7 @@ public sealed partial class VoiceInputController
         // 監視中はUIA・本文・選択範囲に触れない。外部プロバイダーへの遅延要求を残さない。
         var stamp = _readTargetFocus();
         if (stamp.Window == 0) return;
+        if (_recordingOrigin.Window != stamp.Window) _recordingOrigin = default;
         if (stamp.Window != _lastExternalFocus.Window || stamp.Focus != _lastExternalFocus.Focus || stamp.ProcessId != _lastExternalFocus.ProcessId)
         {
             _lastExternal = null;
@@ -287,15 +289,22 @@ public sealed partial class VoiceInputController
             {
                 _target = null; Track(CaptureTargetAndShowAsync(recording, stamp));
             }
-            else { Open(); SayRecording(entry); }
+            else { OpenForRecording(stamp); SayRecording(entry); }
         }
         catch (Exception ex)
         {
             startingCapture?.Dispose(); startingLive?.Dispose();
             if (_recording is not null) ReleaseRecording(false);
-            Open(); Say(ex.Message);
+            OpenForRecording(stamp); Say(ex.Message);
             _window?.ShowRecognition(ex.Message, error: true);
         }
+    }
+    private void OpenForRecording(VoiceInputTarget.FocusStamp stamp)
+    {
+        // 編集可能な入力欄がなくても、録音キーを押した窓へは戻せるようにする。
+        if (stamp.Window != 0 && VoiceInputTarget.ForegroundWindow == stamp.Window)
+            _recordingOrigin = stamp;
+        Open();
     }
     private void SayRecording(VoiceInputLogEntry entry) => Say($"録音 #{entry.Number} … 録音キーを離すと全文認識。認識中も次の録音を開始できます。");
     private async Task CaptureTargetAndShowAsync(Recording recording, VoiceInputTarget.FocusStamp stamp)
@@ -312,7 +321,7 @@ public sealed partial class VoiceInputController
         finally
         {
             if (Current(recording.Session) && version == _targetCaptureVersion && VoiceInputTarget.IsOwnOrExpectedForeground(stamp.Window))
-            { Open(); _window!.ShowLive(recording.Entry.LiveText); if (_capture is not null) SayRecording(recording.Entry); }
+            { OpenForRecording(stamp); _window!.ShowLive(recording.Entry.LiveText); if (_capture is not null) SayRecording(recording.Entry); }
             if (version == _targetCaptureVersion) { _automaticTargetPending = false; TryAutomaticInput(); }
         }
     }
@@ -581,8 +590,18 @@ public sealed partial class VoiceInputController
     {
         ++_targetCaptureVersion;
         _automaticTargetPending = false;
-        _window?.Hide();
+        HideInputWindow();
         VisibilityChanged();
+    }
+    private void HideInputWindow()
+    {
+        var origin = _recordingOrigin;
+        _recordingOrigin = default;
+        if (_window is not { IsVisible: true } window) return;
+        // 前面化できるうちに戻す。すでに他の窓が前面にある場合は、そのフォーカスを保持する。
+        if (!_stopping && !_paused && !_sessionLocked)
+            VoiceInputTarget.RestoreRecordingFocus(origin, new System.Windows.Interop.WindowInteropHelper(window).Handle);
+        window.Hide();
     }
     internal void SetSessionLocked(bool locked)
     {
@@ -606,7 +625,7 @@ public sealed partial class VoiceInputController
         _keyboard?.Reset(); _operation?.Cancel();
         var session = _session; _session = null;
         if (session is not null) { session.Closed = true; session.Cancellation.Cancel(); _retired.Add(session.Cancellation); }
-        _window?.Hide(); StopMonitor(); StopPlayback(); ReleaseRecording(false);
+        HideInputWindow(); StopMonitor(); StopPlayback(); ReleaseRecording(false);
         if (session is not null)
         {
             try { session.Cache.Dispose(); } catch (Exception ex) { Say("一時音声の削除に失敗しました: " + ex.Message); }

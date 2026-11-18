@@ -279,7 +279,7 @@ internal static class VoiceInputQueueDiagnostics
         finally { await controller.StopAsync(); }
     }
     private static void Require(bool ok, string message) { if (!ok) throw new Exception(message); Console.WriteLine("PASS " + message); }
-    private sealed class Input : IWaveIn
+    internal sealed class Input : IWaveIn
     {
         public WaveFormat WaveFormat { get; set; } = new(24000, 16, 1);
         public event EventHandler<WaveInEventArgs>? DataAvailable;

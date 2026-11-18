@@ -81,9 +81,18 @@ public sealed partial class VoiceInputTarget
     public static FocusStamp CaptureFocusStamp()
     {
         var window = GetForegroundWindow(); var thread = GetWindowThreadProcessId(window, out var pid);
+        if (thread == 0 || pid == Environment.ProcessId) return default;
         var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf<GuiThreadInfo>() };
-        if (pid == Environment.ProcessId || !GetGUIThreadInfo(thread, ref info)) return default;
-        return new(window, info.Focus, info.CaretRect) { ProcessId = pid, ThreadId = thread };
+        var hasFocus = GetGUIThreadInfo(thread, ref info);
+        return new(window, hasFocus ? info.Focus : 0, hasFocus ? info.CaretRect : default) { ProcessId = pid, ThreadId = thread };
+    }
+    internal static void RestoreRecordingFocus(FocusStamp origin, nint echoWindow)
+    {
+        if (origin.Window == 0 || echoWindow == 0 || GetForegroundWindow() != echoWindow ||
+            !IsWindowVisible(origin.Window) || IsIconic(origin.Window)) return;
+        var thread = GetWindowThreadProcessId(origin.Window, out var pid);
+        if (thread != origin.ThreadId || pid != origin.ProcessId || GetForegroundWindow() != echoWindow) return;
+        SetForegroundWindow(origin.Window);
     }
     public static bool ExternalForeground
     {
@@ -142,7 +151,7 @@ public sealed partial class VoiceInputTarget
     private static bool SameFocus(FocusStamp a, FocusStamp b) => a.Window == b.Window && a.Focus == b.Focus;
     public static VoiceInputTarget CaptureFocused(FocusStamp stamp)
     {
-        if (stamp.Window == 0 || !SameFocus(stamp, CaptureFocusStamp()) || !ExternalForeground) throw new InvalidOperationException("入力開始時のフォーカスが変わりました。外部アプリの入力欄で設定した録音キーを押してください。");
+        if (stamp.Focus == 0 || !SameFocus(stamp, CaptureFocusStamp()) || !ExternalForeground) throw new InvalidOperationException("入力開始時のフォーカスが変わりました。外部アプリの入力欄で設定した録音キーを押してください。");
         var emEditor = EmEditorTarget.TryCreateFocused(stamp.Focus, out var nativeFocus);
         var target = emEditor is not null ? new VoiceInputTarget(nativeFocus!, null, null, emEditor)
             : CaptureNear(AutomationElement.FocusedElement ?? throw new InvalidOperationException("入力欄がありません。"), null);
@@ -347,6 +356,7 @@ public sealed partial class VoiceInputTarget
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint window, out int pid);
     [DllImport("user32.dll")] private static extern nint GetAncestor(nint window, uint flags);
     [DllImport("user32.dll")] private static extern bool IsWindow(nint window);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint window);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll")] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);

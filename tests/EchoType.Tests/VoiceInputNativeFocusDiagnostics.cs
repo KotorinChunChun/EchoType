@@ -41,6 +41,9 @@ internal static class VoiceInputNativeFocusDiagnostics
             if (confirmOnly)
             {
                 await VerifyConfirmAsync(app, controller, first, second, edits[0], edits[1], edits[2], other);
+                await controller.StopAsync();
+                controller = null;
+                await VerifyRecordingFocusReturnAsync(app, store, first, second, other);
                 return;
             }
             if (interactive)
@@ -185,6 +188,60 @@ internal static class VoiceInputNativeFocusDiagnostics
         Require(undone.Replace("\r", "") == before.Replace("\r", ""),
             $"入力先自身の元に戻す操作が使える / 応答={undo}, 本文={System.Text.Json.JsonSerializer.Serialize(undone)}");
     }
+    private static async Task VerifyRecordingFocusReturnAsync(Application app, SecureStore store, nint first, nint second, nint other)
+    {
+        store.SaveVoiceInputSettings(new());
+        var pressed = 0;
+        var polls = 0;
+        var armed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var controller = new VoiceInputController(store.Paths, store, app.Dispatcher, false, true,
+            openInput: _ => new VoiceInputQueueDiagnostics.Input(),
+            recognizer: (_, _, _, _) => throw new InvalidOperationException("空録音は認識しない"),
+            keyState: key =>
+            {
+                if (key == 0xFE && Interlocked.Increment(ref polls) == 2) armed.TrySetResult();
+                return Volatile.Read(ref pressed) != 0 && key is 0xA2 or 0xA0;
+            });
+        static async Task Wait(Func<bool> ready, string message)
+        {
+            for (var i = 0; i < 75 && !ready(); i++) await Task.Delay(20);
+            RequireQuiet(ready(), message);
+        }
+        try
+        {
+            await armed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            async Task<VoiceInputWindow> PressAsync()
+            {
+                SendMessage(first, 0x8001, first, 1);
+                await Wait(() => VoiceInputTarget.ForegroundWindow == first, "編集欄のない検証窓を前面にできません");
+                RequireThreadFocus(first, first);
+                Volatile.Write(ref pressed, 1);
+                await Wait(() => app.Windows.OfType<VoiceInputWindow>().Any(window => window.IsActive),
+                    "録音キーでEchoTypeを前面にできません");
+                return app.Windows.OfType<VoiceInputWindow>().Single();
+            }
+            var echo = await PressAsync();
+            // 録音中に元の窓が再表示され、Windowsの直前のウィンドウが変わる状況を作る。
+            ShowWindow(first, 0);
+            ShowWindow(first, 8);
+            RequireQuiet(SetWindowPos(second, 0, 0, 0, 0, 0, 0x0013), "検証窓の表示順を変更できません");
+            RequireQuiet(echo.IsActive, "検証窓の再表示でEchoTypeからフォーカスが外れました");
+            Volatile.Write(ref pressed, 0);
+            await Wait(() => !echo.IsVisible, "空の録音を終了して画面を閉じられません");
+            await Wait(() => VoiceInputTarget.ForegroundWindow == first, "録音開始元へフォーカスが戻りません");
+            RequireThreadFocus(first, first);
+            Console.WriteLine("PASS 録音キーを離して閉じた後に、編集欄のない元の窓へフォーカスを戻す");
+
+            echo = await PressAsync();
+            SendMessage(second, 0x8001, other, 1);
+            await Wait(() => VoiceInputTarget.ForegroundWindow == second, "録音中に別の検証窓を前面にできません");
+            Volatile.Write(ref pressed, 0);
+            await Wait(() => !echo.IsVisible, "別窓に移動しても空の録音を閉じられません");
+            Require(VoiceInputTarget.ForegroundWindow == second, "別窓に手動で移動した場合はフォーカスを維持");
+            RequireThreadFocus(second, other);
+        }
+        finally { await controller.StopAsync(); }
+    }
     private static nint Dispatch(nint hwnd, uint message, nint wParam, nint lParam)
     {
         if (message == 0x8001) { if (lParam != 0) SetForegroundWindow(hwnd); SetActiveWindow(hwnd); SetFocus(wParam); return 0; }
@@ -193,6 +250,7 @@ internal static class VoiceInputNativeFocusDiagnostics
     }
     private static int ForegroundProcessId() { GetWindowThreadProcessId(VoiceInputTarget.ForegroundWindow, out var pid); return pid; }
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint hwnd);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(nint hwnd, int command);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int width, int height, uint flags);
     private static void RequireThreadFocus(nint window, nint focus)
     {

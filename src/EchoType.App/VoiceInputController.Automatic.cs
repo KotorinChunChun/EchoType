@@ -124,13 +124,13 @@ public sealed partial class VoiceInputController
                     settings.AutomaticConfirm && AutomaticConfirmEnabled && !ReferenceEquals(_target, target)) return;
                 if (string.IsNullOrWhiteSpace(formatted) || formatted.Length > 16000) throw new InvalidOperationException("整形結果が空、または16000文字を超えています。");
                 if (needsFormatting) _window.ShowFormattingDiff(before, formatted);
-                else if (!alreadyFormatted) { _window.ResetFormattingDiff(); _window.DraftText = formatted; }
+                else if (!alreadyFormatted) _window.ResetFormattingDiff();
                 var confirm = settings.AutomaticConfirm && AutomaticConfirmEnabled;
                 if (confirm)
                 {
                     Say("本文を入力中…");
                     _automaticSending = true;
-                    var result = await InsertMeasuredAsync(target!, formatted, settings.ReplaceTargetText, cancellation.Token, "automatic-confirm");
+                    var result = await InsertMeasuredAsync(target!, formatted, settings.ReplaceTargetText, _window.DraftCaretIndex, cancellation.Token, "automatic-confirm");
                     _automaticSending = false;
                     if (!Current(session)) return;
                     Say(result);

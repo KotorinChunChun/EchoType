@@ -23,24 +23,31 @@ public sealed partial class VoiceInputController
         Timings.Insert(0, new(DateTimeOffset.Now, stage, model, waiting, processing, result));
         while (Timings.Count > 200) Timings.RemoveAt(Timings.Count - 1);
     }
-    private async Task<string> FormatMeasuredAsync(string text, VoiceInputSettings settings, CancellationToken ct)
+    private async Task<string> FormatMeasuredAsync(string text, VoiceInputSettings settings, CancellationToken ct, bool simple = false)
     {
         ModelExchange? exchange = null;
         using var capture = _formatCodex?.CaptureExchanges(value => { if (value.State != "送信中") exchange = value; });
         var watch = Stopwatch.StartNew(); string outcome = "完了";
+        var window = _window;
+        window?.ShowFormattingProgress(simple, true);
         try { return await _format(text, settings, ct); }
         catch (OperationCanceledException) { outcome = "中止"; throw; }
         catch (Exception ex) { outcome = ex.Message; throw; }
-        finally { Timings.Insert(0, new(DateTimeOffset.Now, "整形", settings.FormattingModel, 0, watch.Elapsed.TotalSeconds, outcome) { Usage = exchange?.Usage }); while (Timings.Count > 200) Timings.RemoveAt(Timings.Count - 1); }
+        finally
+        {
+            window?.ShowFormattingProgress(simple, false);
+            Timings.Insert(0, new(DateTimeOffset.Now, "整形", settings.FormattingModel, 0, watch.Elapsed.TotalSeconds, outcome) { Usage = exchange?.Usage });
+            while (Timings.Count > 200) Timings.RemoveAt(Timings.Count - 1);
+        }
     }
-    private async Task<string> InsertMeasuredAsync(VoiceInputTarget target, string text, bool replace, CancellationToken ct, string reason = "manual-confirm")
+    private async Task<string> InsertMeasuredAsync(VoiceInputTarget target, string text, bool replace, int caret, CancellationToken ct, string reason = "manual-confirm")
     {
         var watch = Stopwatch.StartNew(); string outcome = "完了";
         ConfigureFocusLog(target, reason);
         try
         {
             var mainKey = Settings.GetRecordingShortcut().MainKey;
-            outcome = await Task.Run(() => target.InsertAsync(text, ct, replace, mainKey));
+            outcome = await Task.Run(() => target.InsertAsync(text, ct, replace, mainKey, replacementCaret: caret));
             if (target.WriteVerified) _undoTarget = target;
             return outcome;
         }

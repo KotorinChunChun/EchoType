@@ -108,6 +108,15 @@ public partial class VoiceInputWindow : Window
         TargetPath.Text = target is null ? "" : target.ApplicationName + " | " + target.UiaPath; TargetPath.ToolTip = target is null ? error : TargetPath.Text;
     }
     public void SetStatus(string message) => StatusText.Text = message;
+    private int _simpleFormatting, _promptFormatting;
+    internal void ShowFormattingProgress(bool simple, bool running)
+    {
+        ref var active = ref (simple ? ref _simpleFormatting : ref _promptFormatting);
+        active += running ? 1 : -1;
+        var button = simple ? SimpleFormatButton : FormatButton;
+        var label = simple ? "単純整形" : "プロンプト用整形";
+        button.Content = active > 0 ? label + "…" : label;
+    }
     public void SetBusy(bool busy)
     {
         SetActivity(false, 0, busy);
@@ -194,9 +203,14 @@ public partial class VoiceInputWindow : Window
     public bool InsertDraft(string text, bool focus = true)
     {
         var caret = Editor.CaretIndex;
-        if (Editor.Text.Length + text.Length > Editor.MaxLength) { SetStatus("編集欄は16000文字までです。"); return false; }
-        Editor.Text = Editor.Text.Insert(caret, text);
-        Editor.CaretIndex = caret + text.Length; if (focus) Editor.Focus(); UpdateCaret(); return true;
+        var before = Editor.Text;
+        var after = before.Insert(caret, text);
+        if (after.Length > Editor.MaxLength) { SetStatus("編集欄は16000文字までです。"); return false; }
+        Editor.Text = after;
+        if (focus) Editor.Focus();
+        Editor.Select(caret + Editor.Text.Length - before.Length, 0);
+        UpdateCaret();
+        return true;
     }
     private void Play_Click(object sender, RoutedEventArgs e) { if (sender is Button { Tag: VoiceInputLogEntry entry }) _controller.Play(entry); }
     private void StopPlayback_Click(object sender, RoutedEventArgs e) => _controller.StopPlayback();
@@ -237,9 +251,14 @@ public partial class VoiceInputWindow : Window
     }
     public void ShowFormattingDiff(string before, string after)
     {
+        var caret = Editor.CaretIndex;
+        var suffix = Editor.Text.AsSpan(caret);
         BeforeText.Text = before; BeforePane.Visibility = Visibility.Visible;
         BeforeColumn.Width = new GridLength(1, GridUnitType.Star); UpdateDraftLayout();
-        DraftText = after; QueueDiff();
+        Editor.Text = after;
+        Editor.Select(Editor.Text.AsSpan().EndsWith(suffix, StringComparison.Ordinal)
+            ? Editor.Text.Length - suffix.Length : Math.Min(caret, Editor.Text.Length), 0);
+        QueueDiff();
     }
     public bool HasFormattingDiff => BeforePane.Visibility == Visibility.Visible;
     public void ResetFormattingDiff()

@@ -103,8 +103,11 @@ internal static class VoiceInputQueueDiagnostics
                     await Until(() => status.Text.Contains("検証用の認識失敗"));
                     var failed = grid.Items.Cast<VoiceInputLogEntry>().Last();
                     Require(failed.Details.Contains("検証用の認識失敗"), "認識エラーの理由を画面と録音キューに表示");
+                    editor.Text = "途中\r\n最終行";
+                    editor.Select(2, 0);
                     await controller.RetryRecognitionAsync(failed);
-                    Require(editor.Text == "確定1確定2確定3" && calls[3] == 2 && liveStarts == 1, "元の録音で確定認識だけを再試行");
+                    Require(editor.Text == "途中確定3\r\n最終行" && editor.CaretIndex == "途中確定3".Length &&
+                        calls[3] == 2 && liveStarts == 1, "再試行した認識結果を途中に入れ、カーソルは挿入直後に残す");
                     await Record(4, true);
                     await Until(() => calls.GetValueOrDefault(4) == 1);
                     var files = grid.Items.Cast<VoiceInputLogEntry>().Select(e => e.CachePath).ToArray();
@@ -133,7 +136,7 @@ internal static class VoiceInputQueueDiagnostics
         var formats = 0;
         TaskCompletionSource<string>? formattingGate = null;
         var controller = new VoiceInputController(store.Paths, store, app.Dispatcher, true, true,
-            formatter: (text, _, _) => { formats++; return formattingGate?.Task ?? Task.FromResult("整形:" + text); });
+            formatter: (text, _, ct) => { formats++; return formattingGate?.Task.WaitAsync(ct) ?? Task.FromResult("整形:" + text); });
         var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         try
         {
@@ -162,6 +165,21 @@ internal static class VoiceInputQueueDiagnostics
             typeof(VoiceInputController).GetMethod("TryAutomaticInput", flags)!.Invoke(controller, null);
             await Until(() => formats == 1 && window.DraftText == "整形:試験本文");
             Require(window.IsVisible && controller.TemporarilyPinned, "ピン留め中も自動整形し本文を保持して決定待ちにする");
+            var simple = (Button)window.FindName("SimpleFormatButton");
+            var prompt = (Button)window.FindName("FormatButton");
+            foreach (var button in new[] { simple, prompt })
+            {
+                var label = (string)button.Content;
+                var other = button == simple ? prompt : simple;
+                var otherLabel = other.Content;
+                var width = button.ActualWidth;
+                formattingGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Require((string)button.Content == label + "…" && Equals(other.Content, otherLabel) &&
+                    !button.IsEnabled && button.ActualWidth == width, "押した整形ボタンだけ処理中表示にする");
+                formattingGate.SetResult(window.DraftText);
+                await Until(() => Equals(button.Content, label) && button.IsEnabled);
+            }
             controller.Dismiss();
             Require(!window.IsVisible, "一時ピン留め中でも明示的に閉じられる");
             controller.Open();
@@ -174,11 +192,12 @@ internal static class VoiceInputQueueDiagnostics
             var target = (VoiceInputTarget)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(VoiceInputTarget));
             typeof(VoiceInputController).GetField("_target", flags)!.SetValue(controller, target);
             window.DraftText = "整形待ち本文";
+            var formatsBefore = formats;
             formattingGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
             typeof(VoiceInputController).GetField("_automaticSession", flags)!.SetValue(controller, typeof(VoiceInputController).GetField("_session", flags)!.GetValue(controller));
             typeof(VoiceInputController).GetField("_automaticDraftRequested", flags)!.SetValue(controller, true);
             typeof(VoiceInputController).GetMethod("TryAutomaticInput", flags)!.Invoke(controller, null);
-            Require(formats == 2, "自動決定オンで非同期整形を開始");
+            Require(formats == formatsBefore + 1, "自動決定オンで非同期整形を開始");
             Message(0xA1, 2); Message(0x216); Message(0x232);
             formattingGate.SetResult("整形:整形待ち本文");
             await Until(() => !(bool)typeof(VoiceInputController).GetField("_automaticProcessing", flags)!.GetValue(controller)!);

@@ -528,7 +528,7 @@ public sealed partial class VoiceInputController
             {
                 Say($"{settings.FormattingModel} / {settings.FormattingEffort} で{(simple ? "単純整形" : "プロンプト用整形")}中…");
                 var effective = Effective(settings);
-                var formatted = await FormatMeasuredAsync(text, simple ? effective with { FormattingPrompt = settings.SimpleFormattingPrompt } : effective, operation.Token); operation.Token.ThrowIfCancellationRequested();
+                var formatted = await FormatMeasuredAsync(text, simple ? effective with { FormattingPrompt = settings.SimpleFormattingPrompt } : effective, operation.Token, simple); operation.Token.ThrowIfCancellationRequested();
                 if (string.IsNullOrWhiteSpace(formatted) || formatted.Length > 16000) throw new InvalidOperationException("整形結果が空、または16000文字を超えています。元の本文を保持しました。");
                 _window.ShowFormattingDiff(text, formatted); succeeded = true;
                 Say(Settings.AutomaticInput && AutomaticConfirmEnabled ? "整形しました。入力へ進みます。" : "整形しました。右側を編集し、決定で入力できます。");
@@ -551,12 +551,13 @@ public sealed partial class VoiceInputController
         }
         var session = EnsureSession();
         var replace = ReplaceRequested;
+        var caret = _window.DraftCaretIndex;
         SetBusy(true); var operation = new CancellationTokenSource(); _operation = operation; _work = SendAsync(); await _work;
         async Task SendAsync()
         {
             try
             {
-                var result = await InsertMeasuredAsync(target, text, replace, operation.Token);
+                var result = await InsertMeasuredAsync(target, text, replace, caret, operation.Token);
                 if (!Current(session)) return;
                 Say(result);
                 if (target.WriteVerified)

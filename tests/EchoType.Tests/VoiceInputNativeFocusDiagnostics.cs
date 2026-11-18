@@ -16,7 +16,10 @@ internal static class VoiceInputNativeFocusDiagnostics
         if (RegisterClassEx(ref cls) == 0) return 2;
         _first = CreateWindowEx(0, cls.Name, "検証専用設定", 0x10CF0000, 20, 20, 400, 230, 0, 0, cls.Instance, 0);
         _second = CreateWindowEx(0, cls.Name, "検証専用別窓", 0x10CF0000, 440, 20, 400, 230, 0, 0, cls.Instance, 0);
-        var edits = Enumerable.Range(0, 3).Select(i => CreateWindowEx(0, "Edit", "未保存の用途" + (i + 1), 0x50010080, 10, 10 + i * 45, 350, 32, _first, new nint(240 + i), cls.Instance, 0)).ToArray();
+        var edits = Enumerable.Range(0, 3).Select(i => CreateWindowEx(0, "Edit",
+            i == 2 ? "前の行\r\nこの位置\r\n最終行" : "未保存の用途" + (i + 1),
+            i == 2 ? 0x50010084u : 0x50010080u, 10, 10 + i * 45, 350, i == 2 ? 88 : 32,
+            _first, new nint(240 + i), cls.Instance, 0)).ToArray();
         var other = CreateWindowEx(0, "Edit", "別窓の入力", 0x50010080, 10, 10, 350, 32, _second, new nint(250), cls.Instance, 0);
         Console.WriteLine(string.Join(",", new[] { _first, _second, other }.Concat(edits).Select(h => h.ToInt64()))); Console.Out.Flush();
         if (_first == 0 || _second == 0 || edits.Any(h => h == 0) || other == 0) throw new Exception("Win32 fixtureの作成失敗");
@@ -37,7 +40,7 @@ internal static class VoiceInputNativeFocusDiagnostics
             controller = new(store.Paths, store, app.Dispatcher, true, true, keyState: _ => false);
             if (confirmOnly)
             {
-                await VerifyConfirmAsync(app, controller, first, second, edits[0], edits[1], other);
+                await VerifyConfirmAsync(app, controller, first, second, edits[0], edits[1], edits[2], other);
                 return;
             }
             if (interactive)
@@ -82,7 +85,7 @@ internal static class VoiceInputNativeFocusDiagnostics
                 samples++; await Task.Delay(25);
             }
             Console.WriteLine($"PASS 標準Win32 Editの未保存状態から別窓へ移動し{watch.Elapsed.TotalSeconds:F2}秒・{samples}標本で検証UIスレッド内のアクティブ窓と入力フォーカスを維持 / 通常画面={interactive}");
-            if (interactive) await VerifyConfirmAsync(app, controller, first, second, edits[0], edits[1], other);
+            if (interactive) await VerifyConfirmAsync(app, controller, first, second, edits[0], edits[1], edits[2], other);
         }
         catch (Exception ex) { Console.Error.WriteLine("native試験の元例外: " + ex); throw; }
         finally
@@ -94,27 +97,35 @@ internal static class VoiceInputNativeFocusDiagnostics
     }
 
     private static async Task VerifyConfirmAsync(Application app, VoiceInputController controller,
-        nint first, nint second, nint edit, nint untouched, nint other)
+        nint first, nint second, nint edit, nint untouched, nint multiline, nint other)
     {
-        static string Read(nint handle) => ((ValuePattern)AutomationElement.FromHandle(handle)
-            .GetCurrentPattern(ValuePattern.Pattern)).Current.Value;
+        static string Read(nint handle)
+        {
+            var text = new StringBuilder(1024);
+            ReadControlText(handle, 0x000D, text.Capacity, text);
+            return text.ToString();
+        }
         var original = await Task.Run(() => Read(edit));
         var untouchedText = await Task.Run(() => Read(untouched));
         var otherText = await Task.Run(() => Read(other));
         controller.Open();
         var window = app.Windows.OfType<VoiceInputWindow>().Single();
         const uint preserveGeometryAndFocus = 0x0013;
-        // 画面の大きさによってはEchoTypeが検証欄を覆うため、座標選択の間だけ試験窓を上に置く。
-        RequireQuiet(SetWindowPos(first, -1, 0, 0, 0, 0, preserveGeometryAndFocus), "検証欄を前面の表示順にできません");
-        try
+        async Task Pick(nint field)
         {
-            var bounds = await Task.Run(() => AutomationElement.FromHandle(edit).Current.BoundingRectangle);
-            var point = new Point(bounds.Right - 8, bounds.Top + bounds.Height / 2);
-            var hit = await Task.Run(() => AutomationElement.FromPoint(point).Current.NativeWindowHandle);
-            RequireQuiet(hit == edit, "検証欄の座標を別の要素が覆っています");
-            await controller.PickTargetAsync(point);
+            // 画面の大きさによってはEchoTypeが検証欄を覆うため、座標選択の間だけ試験窓を上に置く。
+            RequireQuiet(SetWindowPos(first, -1, 0, 0, 0, 0, preserveGeometryAndFocus), "検証欄を前面の表示順にできません");
+            try
+            {
+                var bounds = await Task.Run(() => AutomationElement.FromHandle(field).Current.BoundingRectangle);
+                var point = new Point(bounds.Right - 8, bounds.Top + bounds.Height / 2);
+                var hit = await Task.Run(() => AutomationElement.FromPoint(point).Current.NativeWindowHandle);
+                RequireQuiet(hit == field, "検証欄の座標を別の要素が覆っています");
+                await controller.PickTargetAsync(point);
+            }
+            finally { SetWindowPos(first, -2, 0, 0, 0, 0, preserveGeometryAndFocus); }
         }
-        finally { SetWindowPos(first, -2, 0, 0, 0, 0, preserveGeometryAndFocus); }
+        await Pick(edit);
         var target = (System.Windows.Controls.TextBox)window.FindName("TargetPath");
         var status = (System.Windows.Controls.TextBlock)window.FindName("StatusText");
         Require(target.Text.Contains("AutomationId=240"), "指定座標から目的の編集欄を取得 / " + status.Text);
@@ -144,6 +155,31 @@ internal static class VoiceInputNativeFocusDiagnostics
             await Task.Run(() => Read(untouched)) == untouchedText && await Task.Run(() => Read(other)) == otherText,
             "本物の決定ボタンで指定欄に追記し、同じ窓の別欄と別窓は変更しない");
         Require(VoiceInputTarget.ForegroundWindow == first, "入力後に指定窓が前面にある");
+
+        controller.Open();
+        await Pick(multiline);
+        await controller.SetReplaceTargetTextAsync(true);
+        var editor = (System.Windows.Controls.TextBox)window.FindName("Editor");
+        var before = editor.Text;
+        var position = before.IndexOf("位置", StringComparison.Ordinal);
+        Require(position > 0 && before.EndsWith("最終行"), "複数行の既存本文を編集欄へ読み込む");
+        editor.Select(position, 0);
+        const string additional = "追加入力";
+        Require(window.InsertDraft(additional) && window.DraftCaretIndex == position + additional.Length,
+            "編集中のカーソルが追加入力の直後に残る");
+        Confirm();
+        try { await Wait(() => !window.IsVisible); }
+        catch
+        {
+            Console.Error.WriteLine($"検証欄: 元={System.Text.Json.JsonSerializer.Serialize(before)}, 結果={System.Text.Json.JsonSerializer.Serialize(await Task.Run(() => Read(multiline)))}");
+            throw;
+        }
+        var actual = await Task.Run(() => Read(multiline));
+        var caret = actual.IndexOf(additional, StringComparison.Ordinal) + additional.Length;
+        var selection = SendMessage(multiline, 0xB0, 0, 0);
+        Require(actual.Replace("\r", "") == before.Insert(position, additional).Replace("\r", "") &&
+            selection == (caret | caret << 16) && caret < actual.Length,
+            "複数行を決定ボタンで置換後にカーソルが追加入力の直後に残る");
     }
     private static nint Dispatch(nint hwnd, uint message, nint wParam, nint lParam)
     {
@@ -180,7 +216,9 @@ internal static class VoiceInputNativeFocusDiagnostics
     [DllImport("user32.dll")] private static extern nint DispatchMessage(ref Message message);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint DefWindowProc(nint hwnd, uint message, nint wParam, nint lParam);
     [DllImport("user32.dll")] private static extern bool PostMessage(nint hwnd, uint message, nint wParam, nint lParam);
-    [DllImport("user32.dll")] private static extern nint SendMessage(nint hwnd, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint SendMessage(nint hwnd, uint message, nint wParam, nint lParam);
+    [DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = CharSet.Unicode)]
+    private static extern nint ReadControlText(nint hwnd, uint message, nint capacity, StringBuilder output);
     [DllImport("user32.dll")] private static extern nint SetFocus(nint hwnd);
     [DllImport("user32.dll")] private static extern bool DestroyWindow(nint hwnd);
     [DllImport("user32.dll")] private static extern void PostQuitMessage(int code);

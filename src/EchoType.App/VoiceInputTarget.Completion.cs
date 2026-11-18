@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
 
@@ -41,10 +42,13 @@ public sealed partial class VoiceInputTarget
         if (GetForegroundWindow() != _window) return false;
         if (_emEditor is not null)
         {
-            _emEditor.Select(prefix.Length, prefix.Length);
-            return _emEditor.ReadSelection(actual.Length) == (prefix.Length, prefix.Length);
+            var offset = CaretOffset(actual, prefix);
+            _emEditor.Select(offset, offset);
+            return _emEditor.ReadSelection(actual.Length) == (offset, offset);
         }
         RequireInputForeground(); LogFocus("caret-set-focus"); _element.SetFocus();
+        if (HasNativeEditFocus() && TryMoveNativeEditCaret(prefix))
+            return true;
         var normalizedPrefix = Normalize(prefix);
         if (_pattern is not null)
         {
@@ -86,4 +90,64 @@ public sealed partial class VoiceInputTarget
         await Task.Delay(50);
         return GetForegroundWindow() == _window && Automation.Compare(_element, AutomationElement.FocusedElement);
     }
+
+    private bool HasNativeEditFocus() => CaptureFocusStamp().Focus == _nativeWindow && IsNativeEdit();
+
+    private bool IsNativeEdit()
+    {
+        if (_nativeWindow == 0 || _nativeWindow != (nint)_element.Current.NativeWindowHandle) return false;
+        var name = new StringBuilder(32);
+        return GetClassName(_nativeWindow, name, name.Capacity) != 0 &&
+            string.Equals(name.ToString(), "Edit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool TryMoveNativeEditCaret(string prefix)
+    {
+        RequireInputForeground();
+        const uint abortIfHung = 2, getTextLength = 0x000E, getText = 0x000D, setSelection = 0xB1, getSelection = 0xB0, scrollCaret = 0xB7;
+        if (SendMessageTimeout(_nativeWindow, getTextLength, 0, 0, abortIfHung, 250, out var length) == 0 || length > 200000)
+            return false;
+        var buffer = new StringBuilder((int)length + 1);
+        if (ReadNativeText(_nativeWindow, getText, buffer.Capacity, buffer, abortIfHung, 250, out _) == 0)
+            return false;
+        var offset = CaretOffset(buffer.ToString(), prefix);
+        if (offset >= ushort.MaxValue) return false;
+        RequireInputForeground();
+        if (SendMessageTimeout(_nativeWindow, setSelection, offset, offset, abortIfHung, 250, out _) == 0 ||
+            SendMessageTimeout(_nativeWindow, getSelection, 0, 0, abortIfHung, 250, out var selection) == 0 ||
+            selection != (nuint)(offset | offset << 16)) return false;
+        RequireInputForeground();
+        SendMessageTimeout(_nativeWindow, scrollCaret, 0, 0, abortIfHung, 250, out _);
+        return CaptureFocusStamp().Focus == _nativeWindow;
+    }
+
+    private static int CaretOffset(string actual, string prefix)
+    {
+        var normalized = Normalize(prefix);
+        var offset = 0;
+        for (var i = 0; i < normalized.Length; i++)
+        {
+            if (offset >= actual.Length) throw new InvalidOperationException("入力後のカーソル位置を確認できません。");
+            var c = actual[offset++];
+            if (c == '\r')
+            {
+                if (offset < actual.Length && actual[offset] == '\n') offset++;
+                c = '\n';
+            }
+            if (c != normalized[i]) throw new InvalidOperationException("入力後のカーソル位置を確認できません。");
+        }
+        return offset;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(nint window, StringBuilder name, int size);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern nint SendMessageTimeout(nint window, uint message, nint wParam, nint lParam, uint flags, uint milliseconds, out nuint result);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode)]
+    private static extern nint SendNativeText(nint window, uint message, nint wParam, string text, uint flags, uint milliseconds, out nuint result);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode)]
+    private static extern nint ReadNativeText(nint window, uint message, nint capacity, StringBuilder text, uint flags, uint milliseconds, out nuint result);
 }

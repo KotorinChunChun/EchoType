@@ -209,7 +209,7 @@ public sealed partial class VoiceInputTarget
         static bool Down(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
         return InputGuardKeys.Any(Down) || (mainKey != 0 && Down(mainKey));
     }
-    public async Task<string> InsertAsync(string text, CancellationToken ct = default, bool replace = false, int mainKey = 0)
+    public async Task<string> InsertAsync(string text, CancellationToken ct = default, bool replace = false, int mainKey = 0, int? replacementCaret = null)
     {
         if ((!replace && string.IsNullOrWhiteSpace(text)) || text.Length > 16000 || text.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t')))
             throw new InvalidOperationException("入力文は1〜16000文字です。制御文字は入力できません。");
@@ -220,6 +220,8 @@ public sealed partial class VoiceInputTarget
             throw new InvalidOperationException("別のアプリへ移動したため入力を停止しました。");
         }
         if (replace || _preservePoint) Validate(); else ReadCurrentSelection();
+        var expected = replace ? text : _prefix + text + _suffix;
+        var caretPrefix = replace ? text[..Math.Clamp(replacementCaret ?? text.Length, 0, text.Length)] : _prefix + text;
         ct.ThrowIfCancellationRequested();
         // 決定用のキーと録音キーを離してから入力先へ戻す。
         for (var attempt = 0; attempt < 150 && InputKeysHeld(mainKey); attempt++) await Task.Delay(20, ct);
@@ -246,7 +248,20 @@ public sealed partial class VoiceInputTarget
             RequireInputKeysReleased();
             if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("二重送信を停止しました。");
             RequireInputForeground(); _emEditor.ReplaceSelection(text);
-            return await VerifyAsync(replace ? text : _prefix + text + _suffix, replace ? text : _prefix + text, mainKey);
+            return await VerifyAsync(expected, caretPrefix, mainKey);
+        }
+        if (replace && IsNativeEdit())
+        {
+            FocusForInput();
+            Validate(); RequireInputKeysReleased(); RequireInputForeground();
+            if (!HasNativeEditFocus()) throw new InvalidOperationException("入力先のフォーカスが変わったため停止しました。");
+            if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("二重送信を停止しました。");
+            const uint setText = 0x000C, abortIfHung = 2;
+            // 標準Editの複数行テキストを、キーストロークへ変換せずに書き込む。
+            var nativeText = Normalize(text).Replace("\n", "\r\n");
+            if (SendNativeText(_nativeWindow, setText, 0, nativeText, abortIfHung, 250, out var result) == 0 || result == 0)
+                return "入力結果を確認できません。自動再送はしません。対象の本文を確認してください。";
+            return await VerifyAsync(expected, caretPrefix, mainKey);
         }
         if (replace && _value is { Current.IsReadOnly: false } || _pattern is null || _range is null)
         {
@@ -256,7 +271,7 @@ public sealed partial class VoiceInputTarget
             RequireInputKeysReleased();
             if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("二重送信を停止しました。");
             RequireInputForeground(); _value.SetValue(replace ? text : _original + text);
-            return await VerifyAsync(replace ? text : _original + text, replace ? text : _original + text, mainKey);
+            return await VerifyAsync(expected, caretPrefix, mainKey);
         }
         FocusForInput();
         Validate(); // フォーカス取得で再描画される編集欄も、選択範囲を使う前に取り直す。
@@ -276,7 +291,7 @@ public sealed partial class VoiceInputTarget
         RequireInputForeground();
         if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) != inputs.Length)
             return "入力結果を確認できません。自動再送はしません。対象の本文を確認してください。";
-        return await VerifyAsync(replace ? text : _prefix + text + _suffix, replace ? text : _prefix + text, mainKey);
+        return await VerifyAsync(expected, caretPrefix, mainKey);
 
         void RequireInputKeysReleased()
         {

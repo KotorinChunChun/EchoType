@@ -180,6 +180,10 @@ internal static class VoiceInputNativeFocusDiagnostics
         Require(actual.Replace("\r", "") == before.Insert(position, additional).Replace("\r", "") &&
             selection == (caret | caret << 16) && caret < actual.Length,
             "複数行を決定ボタンで置換後にカーソルが追加入力の直後に残る");
+        var undo = SendMessage(multiline, 0xC7, 0, 0);
+        var undone = Read(multiline);
+        Require(undone.Replace("\r", "") == before.Replace("\r", ""),
+            $"入力先自身の元に戻す操作が使える / 応答={undo}, 本文={System.Text.Json.JsonSerializer.Serialize(undone)}");
     }
     private static nint Dispatch(nint hwnd, uint message, nint wParam, nint lParam)
     {

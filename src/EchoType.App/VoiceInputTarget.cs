@@ -255,11 +255,19 @@ public sealed partial class VoiceInputTarget
             FocusForInput();
             Validate(); RequireInputKeysReleased(); RequireInputForeground();
             if (!HasNativeEditFocus()) throw new InvalidOperationException("入力先のフォーカスが変わったため停止しました。");
-            if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("二重送信を停止しました。");
-            const uint setText = 0x000C, abortIfHung = 2;
-            // 標準Editの複数行テキストを、キーストロークへ変換せずに書き込む。
+            var nativeBefore = ReadNativeEditText();
+            if (nativeBefore is null || Normalize(nativeBefore) != Normalize(_original))
+                throw new InvalidOperationException("入力先の本文を確認できませんでした。");
             var nativeText = Normalize(text).Replace("\n", "\r\n");
-            if (SendNativeText(_nativeWindow, setText, 0, nativeText, abortIfHung, 250, out var result) == 0 || result == 0)
+            var (start, end, replacement) = NativeEditChange(nativeBefore, nativeText);
+            const uint setSelection = 0xB1, replaceSelection = 0xC2, abortIfHung = 2;
+            RequireInputForeground();
+            if (SendMessageTimeout(_nativeWindow, setSelection, start, end, abortIfHung, 250, out _) == 0)
+                throw new InvalidOperationException("入力先の変更範囲を選択できませんでした。");
+            RequireInputForeground();
+            if (!HasNativeEditFocus()) throw new InvalidOperationException("入力先のフォーカスが変わったため停止しました。");
+            if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("二重送信を停止しました。");
+            if (SendNativeText(_nativeWindow, replaceSelection, 1, replacement, abortIfHung, 250, out _) == 0)
                 return "入力結果を確認できません。自動再送はしません。対象の本文を確認してください。";
             return await VerifyAsync(expected, caretPrefix, mainKey);
         }

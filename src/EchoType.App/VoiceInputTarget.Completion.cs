@@ -103,22 +103,51 @@ public sealed partial class VoiceInputTarget
 
     private bool TryMoveNativeEditCaret(string prefix)
     {
-        RequireInputForeground();
-        const uint abortIfHung = 2, getTextLength = 0x000E, getText = 0x000D, setSelection = 0xB1, getSelection = 0xB0, scrollCaret = 0xB7;
-        if (SendMessageTimeout(_nativeWindow, getTextLength, 0, 0, abortIfHung, 250, out var length) == 0 || length > 200000)
-            return false;
-        var buffer = new StringBuilder((int)length + 1);
-        if (ReadNativeText(_nativeWindow, getText, buffer.Capacity, buffer, abortIfHung, 250, out _) == 0)
-            return false;
-        var offset = CaretOffset(buffer.ToString(), prefix);
+        var text = ReadNativeEditText();
+        if (text is null) return false;
+        var offset = CaretOffset(text, prefix);
         if (offset >= ushort.MaxValue) return false;
         RequireInputForeground();
+        const uint abortIfHung = 2, setSelection = 0xB1, getSelection = 0xB0, scrollCaret = 0xB7;
         if (SendMessageTimeout(_nativeWindow, setSelection, offset, offset, abortIfHung, 250, out _) == 0 ||
             SendMessageTimeout(_nativeWindow, getSelection, 0, 0, abortIfHung, 250, out var selection) == 0 ||
             selection != (nuint)(offset | offset << 16)) return false;
         RequireInputForeground();
         SendMessageTimeout(_nativeWindow, scrollCaret, 0, 0, abortIfHung, 250, out _);
         return CaptureFocusStamp().Focus == _nativeWindow;
+    }
+
+    private static (int Start, int End, string Replacement) NativeEditChange(string before, string after)
+    {
+        var start = 0;
+        while (start < before.Length && start < after.Length && before[start] == after[start]) start++;
+        if (SplitsCharacter(before, start) || SplitsCharacter(after, start)) start--;
+        var end = before.Length;
+        var replacementEnd = after.Length;
+        while (end > start && replacementEnd > start && before[end - 1] == after[replacementEnd - 1])
+        {
+            end--;
+            replacementEnd--;
+        }
+        if (SplitsCharacter(before, end) || SplitsCharacter(after, replacementEnd))
+        {
+            end++;
+            replacementEnd++;
+        }
+        return (start, end, after[start..replacementEnd]);
+
+        static bool SplitsCharacter(string text, int index) => index > 0 && index < text.Length &&
+            (char.IsSurrogatePair(text[index - 1], text[index]) || text[index - 1] == '\r' && text[index] == '\n');
+    }
+
+    private string? ReadNativeEditText()
+    {
+        RequireInputForeground();
+        const uint abortIfHung = 2, getTextLength = 0x000E, getText = 0x000D;
+        if (SendMessageTimeout(_nativeWindow, getTextLength, 0, 0, abortIfHung, 250, out var length) == 0 || length > 200000)
+            return null;
+        var buffer = new StringBuilder((int)length + 1);
+        return ReadNativeText(_nativeWindow, getText, buffer.Capacity, buffer, abortIfHung, 250, out _) != 0 ? buffer.ToString() : null;
     }
 
     private static int CaretOffset(string actual, string prefix)

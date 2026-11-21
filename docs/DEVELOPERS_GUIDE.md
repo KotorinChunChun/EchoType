@@ -18,7 +18,7 @@ pwsh -NoProfile -File dev/scripts/build.ps1 -Configuration Debug
 通常の起動は同じホットキーを使う旧機能の停止後に行います。画面確認には非表示デスクトップを使う検証コマンドを使用できます。右辺の試験出力はテストのビルド出力下に生成されます。
 
 ```powershell
-dotnet build tests/EchoType.Tests
+dotnet build tests/EchoType.Tests -p:RestoreLockedMode=true
 $test = '.\tests\EchoType.Tests\bin\Debug\net10.0-windows\EchoType.Tests.exe'
 & $test
 & $test --isolated-app (Resolve-Path 'release/v0.1.0/EchoType.exe').Path
@@ -30,9 +30,9 @@ $test = '.\tests\EchoType.Tests\bin\Debug\net10.0-windows\EchoType.Tests.exe'
 
 ## 保存先とモデル
 
-設定の「登録済みの接続」の［追加］で接続名・方式・URL・必要なAPIキーを登録します。確定と即時表示では登録した接続を個別に選択し、同じ接続で別々のモデルを指定できます。TranscriptionServerの既定URLは `http://127.0.0.1:8769/v1/audio/transcriptions` です。TranscriptionServerのモデルは取得した一覧で選びます。サーバーの起動準備が完了した後は［モデル一覧を更新］を押してください。
+設定の［接続・モデル管理］から接続名・方式・URL・必要なAPIキーとモデルを登録します。設定画面の「登録済みモデル」で「確定」と「即時表示」を個別に選びます。TranscriptionServerの既定URLは `http://127.0.0.1:8769/v1/audio/transcriptions` です。サーバーの起動準備が完了した後、接続の編集画面で［モデル一覧を取得］を押し、取得した候補からモデルを登録します。
 
-「Windows標準（デバッグ）」は確定と即時表示の接続欄から直接選択できます。OSにある日本語の認識エンジンを使用します。検証用WAVでの認識は `& $test --windows-speech-smoke $wav` で確認できます。
+「Windows標準（デバッグ）」はモデル一覧から直接選択できます。OSにある日本語の認識エンジンを使用します。検証用WAVでの認識は `& $test --windows-speech-smoke $wav` で確認できます。
 
 ループバックではHTTP、別のPCへはHTTPSを使います。認識の受付状態とlocal／lan認証の一時トークンは `/api/health` で確認し、`/v1/models` の文字起こし候補を表示します。認識時は選んだモデルIDを変更せずに `/v1/audio/transcriptions` へ送ります。一時トークンは設定に保存しません。
 
